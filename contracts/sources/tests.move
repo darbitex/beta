@@ -386,11 +386,28 @@ module darbitex::tests {
         give_tokens(@0x100, POOL_AMOUNT);
 
         let add = 100_000_000;
-        let position = pool::add_liquidity(user, pool_addr, add, add);
+        let position = pool::add_liquidity(user, pool_addr, add, add, 0);
         let position_addr = object::object_address(&position);
         let (pos_pool, pos_shares, _, _) = pool::position_info(position_addr);
         assert!(pos_pool == pool_addr, 1);
         assert!(pos_shares > 0, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    #[expected_failure(abort_code = 3, location = darbitex::pool)]
+    /// min_shares_out slippage protection. Setting the floor above what the
+    /// pool can mint must abort E_SLIPPAGE. Added per audit MEDIUM-3.
+    fun test_add_liquidity_min_shares_out_abort(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        // A 100M/100M add into a 100B/100B pool mints ~100M shares. Asking
+        // for 200M floor must abort with E_SLIPPAGE.
+        pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 200_000_000);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -405,7 +422,7 @@ module darbitex::tests {
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
         // 1000:2000 is 100% skew from the 1:1 reserve ratio; tolerance 5%.
-        pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000);
+        pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000, 0);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -421,7 +438,7 @@ module darbitex::tests {
         let before_a = bal(@0x100, meta_a);
         let before_b = bal(@0x100, meta_b);
 
-        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
         let (fa_a, fa_b) = pool::remove_liquidity(user, position);
         primary_fungible_store::deposit(@0x100, fa_a);
@@ -448,7 +465,7 @@ module darbitex::tests {
         give_tokens(@0x200, POOL_AMOUNT);
 
         // Provider adds a mid-sized position.
-        let position = pool::add_liquidity(provider, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(provider, pool_addr, 100_000_000, 100_000_000, 0);
 
         // Swapper drives fee accrual with a meaningful swap.
         router::swap_with_deadline(
@@ -474,7 +491,7 @@ module darbitex::tests {
 
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
-        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
         // Transfer to @0x200.
         account::create_account_for_test(@0x200);
@@ -724,7 +741,7 @@ module darbitex::tests {
         // Provider adds a non-trivial position so their share of LP fees is
         // large enough that claim amount > 0 under any realistic rounding.
         let position = pool::add_liquidity(
-            provider, pool_addr, 1_000_000_000, 1_000_000_000,
+            provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
         );
 
         // Swapper drives multiple swaps to accumulate meaningful LP fees.
@@ -796,7 +813,7 @@ module darbitex::tests {
         account::create_account_for_test(@0x100);
         let provider = account::create_signer_for_test(@0x100);
         let position = pool::add_liquidity(
-            &provider, pool_addr, 1_000_000_000, 1_000_000_000,
+            &provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
         );
 
         let (fa_a, fa_b) = pool::remove_liquidity(&provider, position);

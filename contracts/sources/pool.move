@@ -526,16 +526,16 @@ module darbitex::pool {
             (pool.reserve_b, pool.reserve_a)
         };
 
-        // x*y=k swap math with SWAP_FEE_BPS wedge. Explicit outer parens on
-        // the final cast make the precedence unambiguous: divide in u128
-        // first, then cast the bounded result to u64. Without the outer
-        // parens a reader might worry that `as` binds tighter than `/`;
-        // Move actually resolves this correctly in either case because
-        // `u128 / u64` would be a type error, but explicit parens guard
-        // against future refactor confusion.
-        let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
-        let numerator = amount_in_after_fee * (reserve_out as u128);
-        let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
+        // x*y=k swap math with SWAP_FEE_BPS wedge. All intermediate products
+        // computed in u256 to avoid the u128 overflow risk flagged by audit
+        // MEDIUM-1 (Claude + DeepSeek + Gemini): for pools with
+        // reserve_out near u64::MAX and amount_in near u64::MAX, the u128
+        // product `amount_in × 9999 × reserve_out` can exceed 2^128. The
+        // final result is bounded by reserve_out ≤ u64::MAX so the cast
+        // back to u64 is safe.
+        let amount_in_after_fee = (amount_in as u256) * ((BPS_DENOM - SWAP_FEE_BPS) as u256);
+        let numerator = amount_in_after_fee * (reserve_out as u256);
+        let denominator = (reserve_in as u256) * (BPS_DENOM as u256) + amount_in_after_fee;
         let amount_out = ((numerator / denominator) as u64);
 
         assert!(amount_out >= min_out, E_SLIPPAGE);
@@ -602,11 +602,18 @@ module darbitex::pool {
     /// Add liquidity to an existing pool. Must match current reserve ratio
     /// within 5% tolerance. Mints a new LpPosition NFT to the provider; each
     /// add_liquidity call mints a separate position (no merging).
+    ///
+    /// `min_shares_out` is the slippage floor. If the computed shares are
+    /// below this value, the call aborts with `E_SLIPPAGE`. Callers who do
+    /// not care about exact share counts can pass 0, but any caller that
+    /// trusts its own ratio computation should pass a meaningful floor.
+    /// Added per audit MEDIUM-3 (Claude + Gemini round 1).
     public fun add_liquidity(
         provider: &signer,
         pool_addr: address,
         amount_a: u64,
         amount_b: u64,
+        min_shares_out: u64,
     ): Object<LpPosition> acquires Pool {
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
         assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
@@ -616,9 +623,12 @@ module darbitex::pool {
 
         update_twap(pool);
 
-        // Proportionality check vs current reserves, 5% tolerance. Explicit
-        // outer parens on final casts so the precedence is unambiguous.
-        let expected_b = (((amount_a as u128) * (pool.reserve_b as u128) / (pool.reserve_a as u128)) as u64);
+        // Proportionality check vs current reserves, 5% tolerance. u256
+        // intermediate to prevent overflow for adversarial reserves
+        // (audit MEDIUM-2).
+        let expected_b = (
+            ((amount_a as u256) * (pool.reserve_b as u256) / (pool.reserve_a as u256)) as u64
+        );
         let tolerance = if (expected_b < 20) { 1 } else { expected_b / 20 };
         let amount_b_u128 = amount_b as u128;
         let expected_b_u128 = expected_b as u128;
@@ -629,11 +639,17 @@ module darbitex::pool {
             E_DISPROPORTIONAL,
         );
 
-        // Compute shares minted proportionally to the smaller of the two sides.
-        let lp_a = (((amount_a as u128) * (pool.lp_supply as u128) / (pool.reserve_a as u128)) as u64);
-        let lp_b = (((amount_b as u128) * (pool.lp_supply as u128) / (pool.reserve_b as u128)) as u64);
+        // Compute shares minted proportionally to the smaller of the two
+        // sides. u256 intermediate (audit MEDIUM-2).
+        let lp_a = (
+            ((amount_a as u256) * (pool.lp_supply as u256) / (pool.reserve_a as u256)) as u64
+        );
+        let lp_b = (
+            ((amount_b as u256) * (pool.lp_supply as u256) / (pool.reserve_b as u256)) as u64
+        );
         let shares = if (lp_a < lp_b) { lp_a } else { lp_b };
         assert!(shares > 0, E_ZERO_AMOUNT);
+        assert!(shares >= min_shares_out, E_SLIPPAGE);
 
         let provider_addr = signer::address_of(provider);
 
@@ -702,9 +718,13 @@ module darbitex::pool {
         let claim_a = pending_from_accumulator(pool.lp_fee_per_share_a, fee_debt_a, shares);
         let claim_b = pending_from_accumulator(pool.lp_fee_per_share_b, fee_debt_b, shares);
 
-        // Proportional reserve payout. Explicit outer parens on final casts.
-        let amount_a = (((shares as u128) * (pool.reserve_a as u128) / (pool.lp_supply as u128)) as u64);
-        let amount_b = (((shares as u128) * (pool.reserve_b as u128) / (pool.lp_supply as u128)) as u64);
+        // Proportional reserve payout. u256 intermediate (audit MEDIUM-2).
+        let amount_a = (
+            ((shares as u256) * (pool.reserve_a as u256) / (pool.lp_supply as u256)) as u64
+        );
+        let amount_b = (
+            ((shares as u256) * (pool.reserve_b as u256) / (pool.lp_supply as u256)) as u64
+        );
 
         pool.lp_supply = pool.lp_supply - shares;
         assert!(pool.lp_supply >= MINIMUM_LIQUIDITY, E_INSUFFICIENT_LIQUIDITY);
@@ -980,13 +1000,15 @@ module darbitex::pool {
 
     /// Entry variant of add_liquidity. Position NFT is minted to provider
     /// address as part of create_object; no explicit transfer needed.
+    /// `min_shares_out` is the slippage floor — pass 0 for no protection.
     public entry fun add_liquidity_entry(
         provider: &signer,
         pool_addr: address,
         amount_a: u64,
         amount_b: u64,
+        min_shares_out: u64,
     ) acquires Pool {
-        let _ = add_liquidity(provider, pool_addr, amount_a, amount_b);
+        let _ = add_liquidity(provider, pool_addr, amount_a, amount_b, min_shares_out);
     }
 
     /// Entry variant of remove_liquidity. Deposits both returned FAs back to
@@ -1089,9 +1111,11 @@ module darbitex::pool {
         } else {
             (p.reserve_b, p.reserve_a)
         };
-        let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
-        let numerator = amount_in_after_fee * (reserve_out as u128);
-        let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
+        // u256 intermediate to match the swap path and avoid overflow on
+        // adversarial reserves (audit MEDIUM-1).
+        let amount_in_after_fee = (amount_in as u256) * ((BPS_DENOM - SWAP_FEE_BPS) as u256);
+        let numerator = amount_in_after_fee * (reserve_out as u256);
+        let denominator = (reserve_in as u256) * (BPS_DENOM as u256) + amount_in_after_fee;
         ((numerator / denominator) as u64)
     }
 
