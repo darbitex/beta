@@ -205,6 +205,44 @@ under "Design questions" rather than as a finding.
 
 ---
 
+## 4a. Dependencies
+
+Beta depends on exactly three Move packages, all from the Aptos canonical
+framework distribution. Zero third-party code.
+
+- **AptosFramework** (explicit in Move.toml, pinned to `mainnet` rev) —
+  provides `object`, `fungible_asset`, `primary_fungible_store`,
+  `account`, `aptos_account`, `aptos_coin`, `coin`, `event`, `timestamp`,
+  `table`, `type_info`
+- **AptosStdlib** (transitive via AptosFramework) — provides `Table`,
+  `type_info::TypeInfo`, `math64`, etc.
+- **MoveStdlib** (transitive via AptosFramework) — provides `signer`,
+  `vector`, `option`, `string`, `bcs`, `hash`, `error`
+
+No vendored dependencies. No pulled-in third-party Move packages. The
+entire external surface is Aptos Labs official framework code. Auditors
+can treat framework calls as trusted and focus on our own code's use of
+them.
+
+## 4b. Testnet playground (live)
+
+Beta is deployed on Aptos testnet and has already passed a full
+end-to-end smoke test with real on-chain DAI/USDC pool creation, swap,
+add_liquidity, and remove_liquidity operations. Reviewers can verify
+behavior on-chain before reading source if desired.
+
+- Package: `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
+- Test pool (DAI/USDC): `0x153edb3d8759f0e694eda138a04c736f0b5258e587830723ca91428654abcf2`
+- Publish TX: `0xb625652a0a0d778b99e0d102f62a2b7bb30d919f5fd0c769597e68d66a5c7832`
+- init_factory TX: `0x18a38537fe67bd4be541d9c32a7c8a33a705decd00e4ff0f3686a1229f8eec3e`
+- create_canonical_pool TX: `0xa0c1b6a3c2c4eb1947674038ba4dd3b4e8cf67ba1917afeb96c9b4cf26827459`
+- Test token faucet: legacy V1 test_token module at `0xd91195850afcf3c49a47e07337095f9ef81eee45e80d1643cb393c0a198ba754` exposes permissionless `mint_usdc(to, amount)` and `mint_dai(to, amount)` entries
+
+See `README.md` in the repo root for CLI commands to interact with the
+testnet playground.
+
+---
+
 ## 5. Module map
 
 | File | Lines | Purpose |
