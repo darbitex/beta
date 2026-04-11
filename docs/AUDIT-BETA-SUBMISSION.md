@@ -1,12 +1,98 @@
-# Darbitex Beta — External Audit Submission
+# Darbitex Beta — External Audit Submission (round 2)
 
-**Version:** Beta 0.1.0
+**Version:** Beta 0.1.0 (post-round-1 fix)
 **Date:** 2026-04-12
-**Chain:** Aptos mainnet (testnet smoke test PASSED)
-**Audit package size:** 4 Move source files, ~2420 LoC total, 13862 bytes compiled
+**Chain:** Aptos testnet (round 2 E2E verified)
+**Audit package size:** 4 Move source files, ~2440 LoC total
 **Repo:** https://github.com/darbitex/beta
-**Testnet deployment:** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
+**Round 1 testnet (superseded, do NOT audit):** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
+**Round 2 testnet (current target):** `0x12e8b2be0d705d5d6f1e27b50d331740461dccd2c1150504c2e38a67c6767a0f`
 **Planned mainnet publisher:** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7` (5-of-5 multisig, bootstrap threshold 1/5)
+
+---
+
+## Round 1 audit summary (findings already addressed)
+
+This submission is the **round 2** audit packet. A first round of audits
+(Claude self-audit, DeepSeek, Gemini) found and addressed the following
+issues. Reviewers in round 2 should verify the fixes are correct and
+focus on remaining surface.
+
+**Resolved (fixed + regression tested + on-chain verified):**
+
+- **HIGH-1 (3-way consensus):** LP fee double-counting in `swap()` and
+  `flash_repay()`. Reserves were implicitly crediting the LP portion of
+  the fee (via `reserve += amount_in - extra_fee`) while the accumulator
+  also credited it (`lp_fee_per_share += lp_portion / lp_supply`). Under
+  the bug, `remove_liquidity` would abort for any LP exiting a pool that
+  had any swap+claim activity, because reserve_a would exceed store_a.
+  **Fix:** `swap()` now deducts `reserve_fee = extra_fee + lp_fee` (which
+  equals `total_fee` in normal swaps and `extra_fee` in dust swaps).
+  `flash_repay()` no longer mutates reserves at all — flash_borrow
+  doesn't decrement them, so flash_repay must not add them back.
+  Regression tests added. Verified on-chain at the round 2 testnet
+  address above with the full `swap → add → claim → swap → claim →
+  remove` sequence.
+
+- **LOW-2 (Gemini only):** `flash_repay` accepted excess payment and
+  silently donated it to the pool. **Fix:** tightened the amount check
+  from `>=` to `==`.
+
+- **MEDIUM-1 (Claude + DeepSeek + Gemini):** u128 overflow risk in swap
+  numerator for adversarial reserves. **Fix:** all intermediate
+  multiplications in `swap()` and `get_amount_out()` upgraded to u256.
+
+- **MEDIUM-2 (Claude):** u128 overflow risk in `add_liquidity`
+  proportionality check and shares computation. **Fix:** upgraded to u256
+  across expected_b, lp_a, lp_b, and remove_liquidity proportional
+  payouts.
+
+- **MEDIUM-3 (Claude + Gemini):** `add_liquidity` had no slippage
+  protection. Callers could not enforce expected share counts. **Fix:**
+  added `min_shares_out: u64` parameter to both the composable `fun` and
+  the entry wrapper. Abort code `E_SLIPPAGE` if computed shares below
+  floor. A new test `test_add_liquidity_min_shares_out_abort` verifies
+  the abort path.
+
+**DeepSeek HIGH-1 (cast precedence) — FALSE POSITIVE:** DeepSeek was
+concerned that `numerator / denominator as u64` parses as
+`numerator / (denominator as u64)`, truncating the denominator. Empirical
+refutation: the code compiles successfully, which would be impossible if
+that interpretation were correct (`u128 / u64` is a type error in Move).
+On-chain test results also match the u128 division interpretation. No
+fix needed, but explicit outer parens `((expr) as u64)` added on all
+dual-cast sites for future reader clarity.
+
+**Accepted as designed, not fixed:**
+
+- Dust swap rounding (DeepSeek MEDIUM-1): `extra_fee` floors to 1 while
+  `total_fee` can floor to 0 for dust swaps. The existing saturation in
+  `accrue_fee` handles this correctly — dust swaps round in the pool's
+  favor, which is the standard AMM choice.
+
+- 50/50 hook split odd-unit rounding (Claude MEDIUM-4): marketplace slot
+  always wins the odd unit for `extra_fee = 1` dust regimes. Documented
+  tradeoff; economic impact negligible.
+
+- Event swapper spoofing (Claude INFO, DeepSeek LOW-1, Gemini LOW-1): the
+  `swapper: address` field in the `Swapped` event is an attribution hint,
+  not a trusted identity. Downstream consumers should verify against TX
+  signer if authenticated attribution is needed.
+
+- Symmetric seeding (Gemini Q7 objection): Gemini strongly recommended
+  reverting to arbitrary-ratio seeding. The project owner has committed
+  to strict equality as a non-negotiable design principle. Pool creators
+  are expected to either pick pairs where 1:1 raw unit parity is
+  approximately correct, or accept the immediate arb as market opening
+  cost.
+
+**Test suite state:** 34/34 passing on `aptos move test`. Includes two
+regression tests specifically covering the HIGH-1 swap-claim-remove
+sequence and flash-then-remove sequence.
+
+**On-chain verification:** full end-to-end sequence executed on testnet
+at the round 2 address above. Solvency invariant verified exactly after
+the swap (see explorer for TX hashes).
 
 ---
 
@@ -527,6 +613,7 @@ The following files constitute the complete audit scope. File order:
 3. `contracts/sources/pool_factory.move`
 4. `contracts/sources/router.move`
 5. `contracts/sources/tests.move` (reference only, not in scope)
+
 
 
 ### 11.1 Move.toml
@@ -1079,11 +1166,17 @@ module darbitex::pool {
             (pool.reserve_b, pool.reserve_a)
         };
 
-        // x*y=k swap math with SWAP_FEE_BPS wedge.
-        let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
-        let numerator = amount_in_after_fee * (reserve_out as u128);
-        let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
-        let amount_out = (numerator / denominator as u64);
+        // x*y=k swap math with SWAP_FEE_BPS wedge. All intermediate products
+        // computed in u256 to avoid the u128 overflow risk flagged by audit
+        // MEDIUM-1 (Claude + DeepSeek + Gemini): for pools with
+        // reserve_out near u64::MAX and amount_in near u64::MAX, the u128
+        // product `amount_in × 9999 × reserve_out` can exceed 2^128. The
+        // final result is bounded by reserve_out ≤ u64::MAX so the cast
+        // back to u64 is safe.
+        let amount_in_after_fee = (amount_in as u256) * ((BPS_DENOM - SWAP_FEE_BPS) as u256);
+        let numerator = amount_in_after_fee * (reserve_out as u256);
+        let denominator = (reserve_in as u256) * (BPS_DENOM as u256) + amount_in_after_fee;
+        let amount_out = ((numerator / denominator) as u64);
 
         assert!(amount_out >= min_out, E_SLIPPAGE);
         assert!(amount_out < reserve_out, E_INSUFFICIENT_LIQUIDITY);
@@ -1096,17 +1189,22 @@ module darbitex::pool {
         let extra_fee = if (extra_fee_raw == 0 && amount_in > 0) { 1 } else { extra_fee_raw };
 
         let (lp_fee, hook_1_fee, hook_2_fee) = accrue_fee(pool, total_fee, extra_fee, a_to_b);
-        let _ = lp_fee;
 
-        // Mutate reserves. extra_fee is pulled out (tracked in hook buckets
-        // separately from reserves). LP portion stays as reserve growth via
-        // the x*y=k wedge — no explicit subtraction.
+        // Total amount pulled out of reserves = what accrue_fee credited
+        // to the hook buckets plus what it credited to the lp accumulator.
+        // This equals max(total_fee, extra_fee) in effect: for normal swaps
+        // it's total_fee, for dust swaps where total_fee floors to 0 it's
+        // extra_fee (the floor-protected hook portion) with lp_fee == 0.
+        // Keeping reserves and accumulators in lockstep fixes audit HIGH-1
+        // (self-audit 2026-04-12) — reserves now track principal only.
+        let reserve_fee = extra_fee + lp_fee;
+
         if (a_to_b) {
-            pool.reserve_a = pool.reserve_a + amount_in - extra_fee;
+            pool.reserve_a = pool.reserve_a + amount_in - reserve_fee;
             pool.reserve_b = pool.reserve_b - amount_out;
         } else {
             pool.reserve_a = pool.reserve_a - amount_out;
-            pool.reserve_b = pool.reserve_b + amount_in - extra_fee;
+            pool.reserve_b = pool.reserve_b + amount_in - reserve_fee;
         };
 
         pool.total_swaps = pool.total_swaps + 1;
@@ -1144,11 +1242,18 @@ module darbitex::pool {
     /// Add liquidity to an existing pool. Must match current reserve ratio
     /// within 5% tolerance. Mints a new LpPosition NFT to the provider; each
     /// add_liquidity call mints a separate position (no merging).
+    ///
+    /// `min_shares_out` is the slippage floor. If the computed shares are
+    /// below this value, the call aborts with `E_SLIPPAGE`. Callers who do
+    /// not care about exact share counts can pass 0, but any caller that
+    /// trusts its own ratio computation should pass a meaningful floor.
+    /// Added per audit MEDIUM-3 (Claude + Gemini round 1).
     public fun add_liquidity(
         provider: &signer,
         pool_addr: address,
         amount_a: u64,
         amount_b: u64,
+        min_shares_out: u64,
     ): Object<LpPosition> acquires Pool {
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
         assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
@@ -1158,8 +1263,12 @@ module darbitex::pool {
 
         update_twap(pool);
 
-        // Proportionality check vs current reserves, 5% tolerance.
-        let expected_b = ((amount_a as u128) * (pool.reserve_b as u128) / (pool.reserve_a as u128) as u64);
+        // Proportionality check vs current reserves, 5% tolerance. u256
+        // intermediate to prevent overflow for adversarial reserves
+        // (audit MEDIUM-2).
+        let expected_b = (
+            ((amount_a as u256) * (pool.reserve_b as u256) / (pool.reserve_a as u256)) as u64
+        );
         let tolerance = if (expected_b < 20) { 1 } else { expected_b / 20 };
         let amount_b_u128 = amount_b as u128;
         let expected_b_u128 = expected_b as u128;
@@ -1170,11 +1279,17 @@ module darbitex::pool {
             E_DISPROPORTIONAL,
         );
 
-        // Compute shares minted proportionally to the smaller of the two sides.
-        let lp_a = ((amount_a as u128) * (pool.lp_supply as u128) / (pool.reserve_a as u128) as u64);
-        let lp_b = ((amount_b as u128) * (pool.lp_supply as u128) / (pool.reserve_b as u128) as u64);
+        // Compute shares minted proportionally to the smaller of the two
+        // sides. u256 intermediate (audit MEDIUM-2).
+        let lp_a = (
+            ((amount_a as u256) * (pool.lp_supply as u256) / (pool.reserve_a as u256)) as u64
+        );
+        let lp_b = (
+            ((amount_b as u256) * (pool.lp_supply as u256) / (pool.reserve_b as u256)) as u64
+        );
         let shares = if (lp_a < lp_b) { lp_a } else { lp_b };
         assert!(shares > 0, E_ZERO_AMOUNT);
+        assert!(shares >= min_shares_out, E_SLIPPAGE);
 
         let provider_addr = signer::address_of(provider);
 
@@ -1243,9 +1358,13 @@ module darbitex::pool {
         let claim_a = pending_from_accumulator(pool.lp_fee_per_share_a, fee_debt_a, shares);
         let claim_b = pending_from_accumulator(pool.lp_fee_per_share_b, fee_debt_b, shares);
 
-        // Proportional reserve payout.
-        let amount_a = ((shares as u128) * (pool.reserve_a as u128) / (pool.lp_supply as u128) as u64);
-        let amount_b = ((shares as u128) * (pool.reserve_b as u128) / (pool.lp_supply as u128) as u64);
+        // Proportional reserve payout. u256 intermediate (audit MEDIUM-2).
+        let amount_a = (
+            ((shares as u256) * (pool.reserve_a as u256) / (pool.lp_supply as u256)) as u64
+        );
+        let amount_b = (
+            ((shares as u256) * (pool.reserve_b as u256) / (pool.lp_supply as u256)) as u64
+        );
 
         pool.lp_supply = pool.lp_supply - shares;
         assert!(pool.lp_supply >= MINIMUM_LIQUIDITY, E_INSUFFICIENT_LIQUIDITY);
@@ -1451,6 +1570,15 @@ module darbitex::pool {
     /// Repay the flash borrow with the original principal plus fee. Consumes
     /// the hot-potato receipt. Asserts the k-invariant holds (reserves × after
     /// repay must not fall below pre-borrow product). Releases the lock.
+    ///
+    /// Reserve accounting note: `flash_borrow` does NOT decrement `reserve_a`
+    /// or `reserve_b` when the borrowed amount leaves the store, because the
+    /// `locked` flag guarantees no one reads reserves during the borrow span.
+    /// Therefore `flash_repay` must NOT add the principal back to reserves —
+    /// doing so would inflate reserves by `amount`, breaking solvency. Only
+    /// the fee is routed (to hook buckets via accrue_fee and implicitly to
+    /// LP via the accumulator). Fixed per audit HIGH-1 (self-audit and
+    /// external auditor 2026-04-12).
     public fun flash_repay(
         pool_addr: address,
         fa_in: FungibleAsset,
@@ -1460,7 +1588,12 @@ module darbitex::pool {
         assert!(pool_addr == r_pool, E_WRONG_POOL);
 
         let repay_total = amount + fee;
-        assert!(fungible_asset::amount(&fa_in) >= repay_total, E_INSUFFICIENT_LIQUIDITY);
+        // Strict equality prevents silent donation of excess. Per audit
+        // LOW-2 (external 2026-04-12): a `>=` check would let clumsy
+        // callers pass fa_in with more than repay_total; the excess would
+        // be deposited into the store as untracked surplus ("trapped").
+        // Forcing exact equality turns this footgun into an abort.
+        assert!(fungible_asset::amount(&fa_in) == repay_total, E_INSUFFICIENT_LIQUIDITY);
         assert!(
             object::object_address(&fungible_asset::asset_metadata(&fa_in)) == object::object_address(&metadata),
             E_WRONG_TOKEN,
@@ -1468,37 +1601,27 @@ module darbitex::pool {
 
         let pool = borrow_global_mut<Pool>(pool_addr);
 
-        // Deposit repayment into pool store.
+        // Deposit repayment into pool store. Store now holds (pre_borrow + fee)
+        // of the borrowed-side metadata, because the principal that was
+        // withdrawn in flash_borrow comes back in fa_in alongside the fee.
         primary_fungible_store::deposit(pool_addr, fa_in);
 
-        // The principal returns to the borrowed side's reserves. The fee is
-        // split via the same accrual helper used by swaps.
+        // Route fee through accrue_fee: hook portion to absolute buckets, LP
+        // portion to lp_fee_per_share accumulator. Nothing is added to
+        // reserves — they were never decremented during flash_borrow.
         let is_a = object::object_address(&metadata) == object::object_address(&pool.metadata_a);
-        if (is_a) {
-            pool.reserve_a = pool.reserve_a + amount;
-        } else {
-            pool.reserve_b = pool.reserve_b + amount;
-        };
-
         let extra_fee_raw = amount / EXTRA_FEE_DENOM;
         let extra_fee = if (extra_fee_raw == 0) { 1 } else { extra_fee_raw };
-        // Cap extra_fee to the actual fee amount (in case fee < extra_fee_raw for
-        // very small borrows).
+        // Cap extra_fee to the actual fee amount (in case fee < extra_fee_raw
+        // for very small borrows).
         let extra_fee = if (extra_fee > fee) { fee } else { extra_fee };
         let (_lp, _h1, _h2) = accrue_fee(pool, fee, extra_fee, is_a);
 
-        // The LP remainder of `fee` (fee - extra_fee) is already in reserves
-        // because we added `amount` above and the fee portion of `fa_in` was
-        // deposited; however reserve_a/b only tracks principal + hook pots
-        // were split off. Credit the LP remainder into reserves manually.
-        let lp_remainder = if (fee > extra_fee) { fee - extra_fee } else { 0 };
-        if (is_a) {
-            pool.reserve_a = pool.reserve_a + lp_remainder;
-        } else {
-            pool.reserve_b = pool.reserve_b + lp_remainder;
-        };
-
-        // k-invariant assertion: post-repay reserves × must be >= k_before.
+        // k-invariant assertion: post-repay reserves product must be >= the
+        // pre-borrow snapshot. With the reserve-unchanged fix above, equality
+        // is the expected case (flash loan is economically neutral to k).
+        // This check remains as a safety net in case a future refactor
+        // reintroduces reserve mutations on the flash path.
         let k_after = (pool.reserve_a as u256) * (pool.reserve_b as u256);
         assert!(k_after >= k_before, E_K_VIOLATED);
 
@@ -1517,13 +1640,15 @@ module darbitex::pool {
 
     /// Entry variant of add_liquidity. Position NFT is minted to provider
     /// address as part of create_object; no explicit transfer needed.
+    /// `min_shares_out` is the slippage floor — pass 0 for no protection.
     public entry fun add_liquidity_entry(
         provider: &signer,
         pool_addr: address,
         amount_a: u64,
         amount_b: u64,
+        min_shares_out: u64,
     ) acquires Pool {
-        let _ = add_liquidity(provider, pool_addr, amount_a, amount_b);
+        let _ = add_liquidity(provider, pool_addr, amount_a, amount_b, min_shares_out);
     }
 
     /// Entry variant of remove_liquidity. Deposits both returned FAs back to
@@ -1626,10 +1751,12 @@ module darbitex::pool {
         } else {
             (p.reserve_b, p.reserve_a)
         };
-        let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
-        let numerator = amount_in_after_fee * (reserve_out as u128);
-        let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
-        (numerator / denominator as u64)
+        // u256 intermediate to match the swap path and avoid overflow on
+        // adversarial reserves (audit MEDIUM-1).
+        let amount_in_after_fee = (amount_in as u256) * ((BPS_DENOM - SWAP_FEE_BPS) as u256);
+        let numerator = amount_in_after_fee * (reserve_out as u256);
+        let denominator = (reserve_in as u256) * (BPS_DENOM as u256) + amount_in_after_fee;
+        ((numerator / denominator) as u64)
     }
 
     #[view]
@@ -2595,11 +2722,28 @@ module darbitex::tests {
         give_tokens(@0x100, POOL_AMOUNT);
 
         let add = 100_000_000;
-        let position = pool::add_liquidity(user, pool_addr, add, add);
+        let position = pool::add_liquidity(user, pool_addr, add, add, 0);
         let position_addr = object::object_address(&position);
         let (pos_pool, pos_shares, _, _) = pool::position_info(position_addr);
         assert!(pos_pool == pool_addr, 1);
         assert!(pos_shares > 0, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    #[expected_failure(abort_code = 3, location = darbitex::pool)]
+    /// min_shares_out slippage protection. Setting the floor above what the
+    /// pool can mint must abort E_SLIPPAGE. Added per audit MEDIUM-3.
+    fun test_add_liquidity_min_shares_out_abort(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        // A 100M/100M add into a 100B/100B pool mints ~100M shares. Asking
+        // for 200M floor must abort with E_SLIPPAGE.
+        pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 200_000_000);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -2614,7 +2758,7 @@ module darbitex::tests {
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
         // 1000:2000 is 100% skew from the 1:1 reserve ratio; tolerance 5%.
-        pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000);
+        pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000, 0);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -2630,7 +2774,7 @@ module darbitex::tests {
         let before_a = bal(@0x100, meta_a);
         let before_b = bal(@0x100, meta_b);
 
-        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
         let (fa_a, fa_b) = pool::remove_liquidity(user, position);
         primary_fungible_store::deposit(@0x100, fa_a);
@@ -2657,7 +2801,7 @@ module darbitex::tests {
         give_tokens(@0x200, POOL_AMOUNT);
 
         // Provider adds a mid-sized position.
-        let position = pool::add_liquidity(provider, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(provider, pool_addr, 100_000_000, 100_000_000, 0);
 
         // Swapper drives fee accrual with a meaningful swap.
         router::swap_with_deadline(
@@ -2683,7 +2827,7 @@ module darbitex::tests {
 
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
-        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
         // Transfer to @0x200.
         account::create_account_for_test(@0x200);
@@ -2874,10 +3018,11 @@ module darbitex::tests {
         let (fa_borrowed, receipt) = pool::flash_borrow(pool_addr, meta_a, borrow_amount);
         assert!(fungible_asset::amount(&fa_borrowed) == borrow_amount, 1);
 
-        // Repay with principal + fee. We need extra meta_a for the fee; pull
-        // from darbitex's stash.
+        // Repay with principal + EXACTLY fee. fee = borrow * 1 / 10_000 = 100
+        // (flash fee rate = 1 bps). Strict equality enforced in flash_repay
+        // per audit LOW-2 — passing more than repay_total now aborts.
         let m = borrow_global<TestMints>(@darbitex);
-        let fa_extra = fungible_asset::mint(&m.mint_a, 1_000);
+        let fa_extra = fungible_asset::mint(&m.mint_a, 100);
         fungible_asset::merge(&mut fa_borrowed, fa_extra);
 
         pool::flash_repay(pool_addr, fa_borrowed, receipt);
@@ -2901,6 +3046,116 @@ module darbitex::tests {
     // =========================================================
     //                      TWAP TEST
     // =========================================================
+
+    // =========================================================
+    //         REGRESSION TEST for audit HIGH-1 fix
+    //    (LP fee double-counting in swap() and flash_repay())
+    // =========================================================
+
+    /// Verifies the solvency invariant after swap → claim_lp_fees →
+    /// remove_liquidity. With the double-counting bug present (either
+    /// `reserve += amount_in - extra_fee` in swap, or `reserve += amount`
+    /// in flash_repay), the final remove_liquidity would abort because
+    /// `reserve_a` is inflated above actual store balance and the proportional
+    /// payout exceeds what the pool holds.
+    ///
+    /// This test is the direct regression test for audit HIGH-1.
+    #[test(darbitex = @darbitex, provider = @0x100, swapper = @0x200, framework = @0x1)]
+    fun test_regression_high1_swap_claim_remove_sequence(
+        darbitex: &signer, provider: &signer, swapper: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        // Fund provider and swapper with enough tokens.
+        account::create_account_for_test(@0x100);
+        account::create_account_for_test(@0x200);
+        give_tokens(@0x100, POOL_AMOUNT);
+        give_tokens(@0x200, POOL_AMOUNT);
+
+        // Provider adds a non-trivial position so their share of LP fees is
+        // large enough that claim amount > 0 under any realistic rounding.
+        let position = pool::add_liquidity(
+            provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
+        );
+
+        // Swapper drives multiple swaps to accumulate meaningful LP fees.
+        let i = 0;
+        while (i < 5) {
+            router::swap_with_deadline(
+                swapper, pool_addr, meta_a, 100_000_000, 0, 1_000_000_000,
+            );
+            router::swap_with_deadline(
+                swapper, pool_addr, meta_b, 100_000_000, 0, 1_000_000_000,
+            );
+            i = i + 1;
+        };
+
+        // Provider claims LP fees — store decreases, but reserves stay.
+        // Under the bug this step succeeds but leaves reserve > store.
+        let (claimed_a, claimed_b) = pool::claim_lp_fees(provider, position);
+        primary_fungible_store::deposit(@0x100, claimed_a);
+        primary_fungible_store::deposit(@0x100, claimed_b);
+
+        // Now the critical step: remove_liquidity computes
+        // amount = shares * reserve / lp_supply. With the bug, reserve is
+        // inflated by the already-claimed LP fees, so amount exceeds what
+        // the store holds, and primary_fungible_store::withdraw aborts.
+        // With the fix, reserve exactly matches principal and the payout
+        // works cleanly.
+        let (fa_a, fa_b) = pool::remove_liquidity(provider, position);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
+
+        // Sanity: provider's balance should be in the neighborhood of their
+        // original endowment (they put in POOL_AMOUNT, added 1B back as
+        // liquidity, swapped nothing, and got out roughly the same amount
+        // they put in plus claimed LP fees). Exact equality is not possible
+        // because swaps shifted the reserve ratio.
+        assert!(bal(@0x100, meta_a) > 0, 1);
+        assert!(bal(@0x100, meta_b) > 0, 2);
+    }
+
+    /// Verifies that flash_borrow + flash_repay do not inflate reserves.
+    /// With the bug present, `reserve_a += amount` + `reserve_a += lp_remainder`
+    /// in flash_repay would leave reserve_a bigger than the store after the
+    /// flash, and a subsequent remove_liquidity would abort. With the fix,
+    /// flash loan is economically neutral to reserves.
+    #[test(darbitex = @darbitex, framework = @0x1)]
+    fun test_regression_high1_flash_then_remove_sequence(
+        darbitex: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        // Flash borrow a non-trivial amount, repay with principal + EXACT
+        // fee pulled from the test mint stash. Fee = 10M * 1 / 10000 = 1000.
+        let borrow_amount = 10_000_000;
+        let (fa_borrowed, receipt) = pool::flash_borrow(pool_addr, meta_a, borrow_amount);
+
+        let m = borrow_global<TestMints>(@darbitex);
+        let fa_fee = fungible_asset::mint(&m.mint_a, 1_000);
+        fungible_asset::merge(&mut fa_borrowed, fa_fee);
+
+        pool::flash_repay(pool_addr, fa_borrowed, receipt);
+
+        // Now add a fresh LP position and immediately remove it. Under the
+        // bug, reserve_a is inflated by (amount + lp_remainder) from the
+        // flash, so the proportional remove payout would exceed store.
+        // With the fix, remove works cleanly.
+        give_tokens(@0x100, POOL_AMOUNT);
+        account::create_account_for_test(@0x100);
+        let provider = account::create_signer_for_test(@0x100);
+        let position = pool::add_liquidity(
+            &provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
+        );
+
+        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
+    }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
     fun test_twap_accumulates(
@@ -2995,4 +3250,7 @@ module darbitex::tests {
 
 ---
 
-**End of audit submission.** Total source: ~2420 LoC Move across 4 files.
+**End of round-2 audit submission.** Total production source:
+~1650 LoC Move across 3 files (pool + pool_factory + router),
+plus ~850 LoC test suite. All 34 unit tests passing. HIGH-1 fix
+verified on-chain.
