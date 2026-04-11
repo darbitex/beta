@@ -665,10 +665,11 @@ module darbitex::tests {
         let (fa_borrowed, receipt) = pool::flash_borrow(pool_addr, meta_a, borrow_amount);
         assert!(fungible_asset::amount(&fa_borrowed) == borrow_amount, 1);
 
-        // Repay with principal + fee. We need extra meta_a for the fee; pull
-        // from darbitex's stash.
+        // Repay with principal + EXACTLY fee. fee = borrow * 1 / 10_000 = 100
+        // (flash fee rate = 1 bps). Strict equality enforced in flash_repay
+        // per audit LOW-2 — passing more than repay_total now aborts.
         let m = borrow_global<TestMints>(@darbitex);
-        let fa_extra = fungible_asset::mint(&m.mint_a, 1_000);
+        let fa_extra = fungible_asset::mint(&m.mint_a, 100);
         fungible_asset::merge(&mut fa_borrowed, fa_extra);
 
         pool::flash_repay(pool_addr, fa_borrowed, receipt);
@@ -692,6 +693,116 @@ module darbitex::tests {
     // =========================================================
     //                      TWAP TEST
     // =========================================================
+
+    // =========================================================
+    //         REGRESSION TEST for audit HIGH-1 fix
+    //    (LP fee double-counting in swap() and flash_repay())
+    // =========================================================
+
+    /// Verifies the solvency invariant after swap → claim_lp_fees →
+    /// remove_liquidity. With the double-counting bug present (either
+    /// `reserve += amount_in - extra_fee` in swap, or `reserve += amount`
+    /// in flash_repay), the final remove_liquidity would abort because
+    /// `reserve_a` is inflated above actual store balance and the proportional
+    /// payout exceeds what the pool holds.
+    ///
+    /// This test is the direct regression test for audit HIGH-1.
+    #[test(darbitex = @darbitex, provider = @0x100, swapper = @0x200, framework = @0x1)]
+    fun test_regression_high1_swap_claim_remove_sequence(
+        darbitex: &signer, provider: &signer, swapper: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        // Fund provider and swapper with enough tokens.
+        account::create_account_for_test(@0x100);
+        account::create_account_for_test(@0x200);
+        give_tokens(@0x100, POOL_AMOUNT);
+        give_tokens(@0x200, POOL_AMOUNT);
+
+        // Provider adds a non-trivial position so their share of LP fees is
+        // large enough that claim amount > 0 under any realistic rounding.
+        let position = pool::add_liquidity(
+            provider, pool_addr, 1_000_000_000, 1_000_000_000,
+        );
+
+        // Swapper drives multiple swaps to accumulate meaningful LP fees.
+        let i = 0;
+        while (i < 5) {
+            router::swap_with_deadline(
+                swapper, pool_addr, meta_a, 100_000_000, 0, 1_000_000_000,
+            );
+            router::swap_with_deadline(
+                swapper, pool_addr, meta_b, 100_000_000, 0, 1_000_000_000,
+            );
+            i = i + 1;
+        };
+
+        // Provider claims LP fees — store decreases, but reserves stay.
+        // Under the bug this step succeeds but leaves reserve > store.
+        let (claimed_a, claimed_b) = pool::claim_lp_fees(provider, position);
+        primary_fungible_store::deposit(@0x100, claimed_a);
+        primary_fungible_store::deposit(@0x100, claimed_b);
+
+        // Now the critical step: remove_liquidity computes
+        // amount = shares * reserve / lp_supply. With the bug, reserve is
+        // inflated by the already-claimed LP fees, so amount exceeds what
+        // the store holds, and primary_fungible_store::withdraw aborts.
+        // With the fix, reserve exactly matches principal and the payout
+        // works cleanly.
+        let (fa_a, fa_b) = pool::remove_liquidity(provider, position);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
+
+        // Sanity: provider's balance should be in the neighborhood of their
+        // original endowment (they put in POOL_AMOUNT, added 1B back as
+        // liquidity, swapped nothing, and got out roughly the same amount
+        // they put in plus claimed LP fees). Exact equality is not possible
+        // because swaps shifted the reserve ratio.
+        assert!(bal(@0x100, meta_a) > 0, 1);
+        assert!(bal(@0x100, meta_b) > 0, 2);
+    }
+
+    /// Verifies that flash_borrow + flash_repay do not inflate reserves.
+    /// With the bug present, `reserve_a += amount` + `reserve_a += lp_remainder`
+    /// in flash_repay would leave reserve_a bigger than the store after the
+    /// flash, and a subsequent remove_liquidity would abort. With the fix,
+    /// flash loan is economically neutral to reserves.
+    #[test(darbitex = @darbitex, framework = @0x1)]
+    fun test_regression_high1_flash_then_remove_sequence(
+        darbitex: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        // Flash borrow a non-trivial amount, repay with principal + EXACT
+        // fee pulled from the test mint stash. Fee = 10M * 1 / 10000 = 1000.
+        let borrow_amount = 10_000_000;
+        let (fa_borrowed, receipt) = pool::flash_borrow(pool_addr, meta_a, borrow_amount);
+
+        let m = borrow_global<TestMints>(@darbitex);
+        let fa_fee = fungible_asset::mint(&m.mint_a, 1_000);
+        fungible_asset::merge(&mut fa_borrowed, fa_fee);
+
+        pool::flash_repay(pool_addr, fa_borrowed, receipt);
+
+        // Now add a fresh LP position and immediately remove it. Under the
+        // bug, reserve_a is inflated by (amount + lp_remainder) from the
+        // flash, so the proportional remove payout would exceed store.
+        // With the fix, remove works cleanly.
+        give_tokens(@0x100, POOL_AMOUNT);
+        account::create_account_for_test(@0x100);
+        let provider = account::create_signer_for_test(@0x100);
+        let position = pool::add_liquidity(
+            &provider, pool_addr, 1_000_000_000, 1_000_000_000,
+        );
+
+        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
+    }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
     fun test_twap_accumulates(

@@ -526,11 +526,17 @@ module darbitex::pool {
             (pool.reserve_b, pool.reserve_a)
         };
 
-        // x*y=k swap math with SWAP_FEE_BPS wedge.
+        // x*y=k swap math with SWAP_FEE_BPS wedge. Explicit outer parens on
+        // the final cast make the precedence unambiguous: divide in u128
+        // first, then cast the bounded result to u64. Without the outer
+        // parens a reader might worry that `as` binds tighter than `/`;
+        // Move actually resolves this correctly in either case because
+        // `u128 / u64` would be a type error, but explicit parens guard
+        // against future refactor confusion.
         let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
         let numerator = amount_in_after_fee * (reserve_out as u128);
         let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
-        let amount_out = (numerator / denominator as u64);
+        let amount_out = ((numerator / denominator) as u64);
 
         assert!(amount_out >= min_out, E_SLIPPAGE);
         assert!(amount_out < reserve_out, E_INSUFFICIENT_LIQUIDITY);
@@ -543,17 +549,22 @@ module darbitex::pool {
         let extra_fee = if (extra_fee_raw == 0 && amount_in > 0) { 1 } else { extra_fee_raw };
 
         let (lp_fee, hook_1_fee, hook_2_fee) = accrue_fee(pool, total_fee, extra_fee, a_to_b);
-        let _ = lp_fee;
 
-        // Mutate reserves. extra_fee is pulled out (tracked in hook buckets
-        // separately from reserves). LP portion stays as reserve growth via
-        // the x*y=k wedge — no explicit subtraction.
+        // Total amount pulled out of reserves = what accrue_fee credited
+        // to the hook buckets plus what it credited to the lp accumulator.
+        // This equals max(total_fee, extra_fee) in effect: for normal swaps
+        // it's total_fee, for dust swaps where total_fee floors to 0 it's
+        // extra_fee (the floor-protected hook portion) with lp_fee == 0.
+        // Keeping reserves and accumulators in lockstep fixes audit HIGH-1
+        // (self-audit 2026-04-12) — reserves now track principal only.
+        let reserve_fee = extra_fee + lp_fee;
+
         if (a_to_b) {
-            pool.reserve_a = pool.reserve_a + amount_in - extra_fee;
+            pool.reserve_a = pool.reserve_a + amount_in - reserve_fee;
             pool.reserve_b = pool.reserve_b - amount_out;
         } else {
             pool.reserve_a = pool.reserve_a - amount_out;
-            pool.reserve_b = pool.reserve_b + amount_in - extra_fee;
+            pool.reserve_b = pool.reserve_b + amount_in - reserve_fee;
         };
 
         pool.total_swaps = pool.total_swaps + 1;
@@ -605,8 +616,9 @@ module darbitex::pool {
 
         update_twap(pool);
 
-        // Proportionality check vs current reserves, 5% tolerance.
-        let expected_b = ((amount_a as u128) * (pool.reserve_b as u128) / (pool.reserve_a as u128) as u64);
+        // Proportionality check vs current reserves, 5% tolerance. Explicit
+        // outer parens on final casts so the precedence is unambiguous.
+        let expected_b = (((amount_a as u128) * (pool.reserve_b as u128) / (pool.reserve_a as u128)) as u64);
         let tolerance = if (expected_b < 20) { 1 } else { expected_b / 20 };
         let amount_b_u128 = amount_b as u128;
         let expected_b_u128 = expected_b as u128;
@@ -618,8 +630,8 @@ module darbitex::pool {
         );
 
         // Compute shares minted proportionally to the smaller of the two sides.
-        let lp_a = ((amount_a as u128) * (pool.lp_supply as u128) / (pool.reserve_a as u128) as u64);
-        let lp_b = ((amount_b as u128) * (pool.lp_supply as u128) / (pool.reserve_b as u128) as u64);
+        let lp_a = (((amount_a as u128) * (pool.lp_supply as u128) / (pool.reserve_a as u128)) as u64);
+        let lp_b = (((amount_b as u128) * (pool.lp_supply as u128) / (pool.reserve_b as u128)) as u64);
         let shares = if (lp_a < lp_b) { lp_a } else { lp_b };
         assert!(shares > 0, E_ZERO_AMOUNT);
 
@@ -690,9 +702,9 @@ module darbitex::pool {
         let claim_a = pending_from_accumulator(pool.lp_fee_per_share_a, fee_debt_a, shares);
         let claim_b = pending_from_accumulator(pool.lp_fee_per_share_b, fee_debt_b, shares);
 
-        // Proportional reserve payout.
-        let amount_a = ((shares as u128) * (pool.reserve_a as u128) / (pool.lp_supply as u128) as u64);
-        let amount_b = ((shares as u128) * (pool.reserve_b as u128) / (pool.lp_supply as u128) as u64);
+        // Proportional reserve payout. Explicit outer parens on final casts.
+        let amount_a = (((shares as u128) * (pool.reserve_a as u128) / (pool.lp_supply as u128)) as u64);
+        let amount_b = (((shares as u128) * (pool.reserve_b as u128) / (pool.lp_supply as u128)) as u64);
 
         pool.lp_supply = pool.lp_supply - shares;
         assert!(pool.lp_supply >= MINIMUM_LIQUIDITY, E_INSUFFICIENT_LIQUIDITY);
@@ -898,6 +910,15 @@ module darbitex::pool {
     /// Repay the flash borrow with the original principal plus fee. Consumes
     /// the hot-potato receipt. Asserts the k-invariant holds (reserves × after
     /// repay must not fall below pre-borrow product). Releases the lock.
+    ///
+    /// Reserve accounting note: `flash_borrow` does NOT decrement `reserve_a`
+    /// or `reserve_b` when the borrowed amount leaves the store, because the
+    /// `locked` flag guarantees no one reads reserves during the borrow span.
+    /// Therefore `flash_repay` must NOT add the principal back to reserves —
+    /// doing so would inflate reserves by `amount`, breaking solvency. Only
+    /// the fee is routed (to hook buckets via accrue_fee and implicitly to
+    /// LP via the accumulator). Fixed per audit HIGH-1 (self-audit and
+    /// external auditor 2026-04-12).
     public fun flash_repay(
         pool_addr: address,
         fa_in: FungibleAsset,
@@ -907,7 +928,12 @@ module darbitex::pool {
         assert!(pool_addr == r_pool, E_WRONG_POOL);
 
         let repay_total = amount + fee;
-        assert!(fungible_asset::amount(&fa_in) >= repay_total, E_INSUFFICIENT_LIQUIDITY);
+        // Strict equality prevents silent donation of excess. Per audit
+        // LOW-2 (external 2026-04-12): a `>=` check would let clumsy
+        // callers pass fa_in with more than repay_total; the excess would
+        // be deposited into the store as untracked surplus ("trapped").
+        // Forcing exact equality turns this footgun into an abort.
+        assert!(fungible_asset::amount(&fa_in) == repay_total, E_INSUFFICIENT_LIQUIDITY);
         assert!(
             object::object_address(&fungible_asset::asset_metadata(&fa_in)) == object::object_address(&metadata),
             E_WRONG_TOKEN,
@@ -915,37 +941,27 @@ module darbitex::pool {
 
         let pool = borrow_global_mut<Pool>(pool_addr);
 
-        // Deposit repayment into pool store.
+        // Deposit repayment into pool store. Store now holds (pre_borrow + fee)
+        // of the borrowed-side metadata, because the principal that was
+        // withdrawn in flash_borrow comes back in fa_in alongside the fee.
         primary_fungible_store::deposit(pool_addr, fa_in);
 
-        // The principal returns to the borrowed side's reserves. The fee is
-        // split via the same accrual helper used by swaps.
+        // Route fee through accrue_fee: hook portion to absolute buckets, LP
+        // portion to lp_fee_per_share accumulator. Nothing is added to
+        // reserves — they were never decremented during flash_borrow.
         let is_a = object::object_address(&metadata) == object::object_address(&pool.metadata_a);
-        if (is_a) {
-            pool.reserve_a = pool.reserve_a + amount;
-        } else {
-            pool.reserve_b = pool.reserve_b + amount;
-        };
-
         let extra_fee_raw = amount / EXTRA_FEE_DENOM;
         let extra_fee = if (extra_fee_raw == 0) { 1 } else { extra_fee_raw };
-        // Cap extra_fee to the actual fee amount (in case fee < extra_fee_raw for
-        // very small borrows).
+        // Cap extra_fee to the actual fee amount (in case fee < extra_fee_raw
+        // for very small borrows).
         let extra_fee = if (extra_fee > fee) { fee } else { extra_fee };
         let (_lp, _h1, _h2) = accrue_fee(pool, fee, extra_fee, is_a);
 
-        // The LP remainder of `fee` (fee - extra_fee) is already in reserves
-        // because we added `amount` above and the fee portion of `fa_in` was
-        // deposited; however reserve_a/b only tracks principal + hook pots
-        // were split off. Credit the LP remainder into reserves manually.
-        let lp_remainder = if (fee > extra_fee) { fee - extra_fee } else { 0 };
-        if (is_a) {
-            pool.reserve_a = pool.reserve_a + lp_remainder;
-        } else {
-            pool.reserve_b = pool.reserve_b + lp_remainder;
-        };
-
-        // k-invariant assertion: post-repay reserves × must be >= k_before.
+        // k-invariant assertion: post-repay reserves product must be >= the
+        // pre-borrow snapshot. With the reserve-unchanged fix above, equality
+        // is the expected case (flash loan is economically neutral to k).
+        // This check remains as a safety net in case a future refactor
+        // reintroduces reserve mutations on the flash path.
         let k_after = (pool.reserve_a as u256) * (pool.reserve_b as u256);
         assert!(k_after >= k_before, E_K_VIOLATED);
 
@@ -1076,7 +1092,7 @@ module darbitex::pool {
         let amount_in_after_fee = (amount_in as u128) * ((BPS_DENOM - SWAP_FEE_BPS) as u128);
         let numerator = amount_in_after_fee * (reserve_out as u128);
         let denominator = (reserve_in as u128) * (BPS_DENOM as u128) + amount_in_after_fee;
-        (numerator / denominator as u64)
+        ((numerator / denominator) as u64)
     }
 
     #[view]
