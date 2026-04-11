@@ -11,4 +11,4 @@ rev = "mainnet"
 subdir = "aptos-move/framework/aptos-framework"
 
 [addresses]
-darbitex = "_"
+darbitex = "0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7"
