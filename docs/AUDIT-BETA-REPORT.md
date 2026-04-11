@@ -13,8 +13,8 @@ are consolidated and deduplicated in the final summary at the bottom.
 | Auditor | Role | Completed |
 |---|---|---|
 | Claude Opus 4.6 (in-session self-audit) | First auditor, original implementer reviewing own code | 2026-04-12 |
-| _(external AI #1)_ | pending | — |
-| _(external AI #2)_ | pending | — |
+| DeepSeek (external AI #1) | Independent audit via audit packet | 2026-04-12 |
+| External AI #2 (pasted by user, provenance not specified) | Independent audit via audit packet | 2026-04-12 |
 | _(external AI #3)_ | pending | — |
 | _(external AI #4)_ | pending | — |
 | _(external AI #5)_ | pending | — |
@@ -662,15 +662,264 @@ accepted as documented tradeoff.
 
 ---
 
-# Auditor 2: _(pending)_
+# Auditor 2: DeepSeek (external)
 
-_To be populated by commit author `msgmsg`._
+Submitted by user 2026-04-12. Review targeted the pre-fix source at commit
+`1b6c996`. All direct quotes below are from the DeepSeek response
+verbatim; analysis notes are mine.
+
+## DeepSeek findings
+
+### HIGH-1 (DeepSeek): Unsafe denominator truncation in division operations
+
+DeepSeek wrote:
+> Multiple arithmetic operations cast a `u128` denominator to `u64` before
+> division, truncating the high bits. Examples:
+> ```
+> let amount_out = (numerator / denominator as u64);
+> let lp_a = ((amount_a as u128) * (pool.lp_supply as u128) / (pool.reserve_a as u128) as u64);
+> ```
+> If the denominator exceeds `2^64-1`, the cast wraps to a small value,
+> causing the division to produce an artificially large result.
+
+**Verdict: FALSE POSITIVE.** DeepSeek's interpretation of Move operator
+precedence is incorrect for this code. If `as` actually bound tighter
+than `/` here, the expression would parse as `u128 / u64`, which is a
+type error in Move (the language requires operands of the same type for
+binary arithmetic). The code compiles successfully, which is empirical
+proof that Move is parsing the expression as `(u128 / u128) as u64` —
+the division happens in u128, then the bounded result is cast to u64.
+
+On-chain smoke test results independently confirm this: for a 1B-unit
+swap with 100B reserves, the pool returned `990_000_980` units, which
+matches the u128 arithmetic. If the cast bug DeepSeek described were
+real, the pool would have returned a vastly different (and likely
+zero or enormous) amount.
+
+**Action taken anyway:** added explicit outer parens on all
+dual-cast expressions so future readers cannot misread the precedence,
+and so any AI auditor who has DeepSeek's misconception can see the
+intent at a glance. This is a purely cosmetic defense-in-depth change.
+See commit that adds `((expr) as u64)` wrappers in:
+- `swap()` amount_out computation
+- `add_liquidity()` expected_b, lp_a, lp_b
+- `remove_liquidity()` amount_a, amount_b
+- `get_amount_out()` view
+
+### HIGH-2 (DeepSeek): Double counting of LP fees in swap and flash loan
+
+DeepSeek wrote:
+> In `swap`, reserves are updated as `reserve_in += amount_in - extra_fee`.
+> This includes the LP portion of the fee. Simultaneously, `accrue_fee`
+> adds the same LP portion to `lp_fee_per_share`. The LP portion becomes
+> part of the principal reserves **and** claimable as separate fees. In
+> `flash_repay`, the same error occurs when `lp_remainder` is manually
+> added to reserves after `accrue_fee` already accounted for it.
+
+**Verdict: CONFIRMED. Same finding as Claude self-audit HIGH-1.**
+
+Two independent auditors arrived at this finding from different angles,
+which is strong corroboration. Fix applied as described in the Claude
+self-audit HIGH-1 response:
+- `swap()`: reserve update now uses `reserve_fee = extra_fee + lp_fee`
+  (which equals `total_fee` for normal swaps and `extra_fee` for dust
+  swaps where total_fee floors below extra_fee)
+- `flash_repay()`: removed `reserve_a = reserve_a + amount` and
+  `reserve_a = reserve_a + lp_remainder` entirely. Flash loan is now
+  economically neutral to reserves — the borrowed amount was never
+  subtracted in `flash_borrow`, so it must not be re-added in
+  `flash_repay`.
+
+Two regression tests added covering the affected sequences:
+- `test_regression_high1_swap_claim_remove_sequence`
+- `test_regression_high1_flash_then_remove_sequence`
+
+### HIGH-3 (DeepSeek): not a bug
+
+DeepSeek themselves retracted this on review, confirming
+`pending_from_accumulator` is correct. No action.
+
+### MEDIUM-1 (DeepSeek): dust swap rounding
+
+DeepSeek flagged that when `extra_fee_raw == 0` and `amount_in > 0`, the
+floored `extra_fee = 1` can exceed `total_fee = 0`. The existing code
+guards this via `if (total_fee > extra_fee)` saturating `lp_portion` to
+zero. Verified correct. No bug, but the UX concern is real — dust swaps
+are essentially all-fee. The current behavior is the standard AMM
+choice ("dust swaps round in the pool's favor").
+
+**Verdict: ACCEPTED as documented behavior.**
+
+### LOW-1 (DeepSeek): event attribution spoofing
+
+Same as Claude self-audit observation in Q5 response. Documented as
+"untrusted" — the `swapper` field in the `Swapped` event is purely
+informational and should not be used for rewards or authentication
+without verifying against the TX signer.
+
+### INFO-1 (DeepSeek): unused `_reserved` fields
+
+Accepted — these are intentional forward-compat placeholders for
+schema evolution. No action.
+
+### INFO-2 (DeepSeek): EXTRA_FEE_DENOM zero check
+
+DeepSeek recommends asserting `EXTRA_FEE_DENOM > 0` in init. Currently
+it's a compile-time `const u64 = 100_000`, guaranteed non-zero at
+compile time. A runtime check would be redundant and would add code
+without any new safety property. **Not implemented.**
+
+## DeepSeek overall verdict
+
+DeepSeek: RED (do not publish to mainnet until HIGH-1, HIGH-2 fixed).
+
+**After fix: HIGH-2 resolved, HIGH-1 was false positive but explicit
+parens applied for clarity. DeepSeek's verdict should clear to GREEN
+on their own re-review of the fixed code.**
 
 ---
 
-# Auditor 3: _(pending)_
+# Auditor 3: External AI #2 (provenance not specified by submitter)
 
-_To be populated by commit author `msgmsg`._
+Submitted by user 2026-04-12. Review targeted the pre-fix source at
+commit `1b6c996`. All direct quotes below are verbatim; analysis notes
+are mine.
+
+## External AI #2 findings
+
+### HIGH-1 (Ext#2): Double-accounting of LP fees will cause permanent pool insolvency
+
+External AI #2 wrote:
+> Darbitex attempts to combine a Uniswap V2 model (where `x*y=k`
+> naturally compounds trading fees into the core reserves) with a
+> MasterChef global accumulator (`lp_fee_per_share_a/b`). In
+> `accrue_fee`, the `lp_portion` of the swap fee is added to the
+> accumulator. However, in `swap`, `amount_in - extra_fee` is added
+> directly to `pool.reserve_a/b`. This means the `lp_portion` is
+> *also* physically kept inside the internal `reserve` tracker.
+>
+> When a user calls `remove_liquidity`, they receive their proportional
+> share of the reserves (which includes the compounded fees). If they
+> then call `claim_lp_fees` (or have the claim explicitly paid out
+> during `remove_liquidity`), they receive the fee *again* from the
+> accumulator. [...] The first few claims will drain the backing funds
+> of other LPs, and eventually, the pool store will brick, permanently
+> locking the remaining liquidity.
+
+**Verdict: CONFIRMED. Third independent observation of HIGH-1.**
+
+This is the same fix as Claude self-audit HIGH-1 / DeepSeek HIGH-2.
+External AI #2's framing of "100% loss of funds / permanent freezing
+of the pool" is accurate — later LPs exiting after many swaps and
+claims would find reserves have diverged from store balance, and
+their proportional payout would exceed what exists.
+
+### HIGH-2 (Ext#2): Flash loan fails to deduct reserves → infinite inflation
+
+External AI #2 wrote:
+> In `flash_borrow`, the `amount` is withdrawn from the pool's primary
+> fungible store and handed to the user, but `pool.reserve_a/b` is
+> *never decreased*. In `flash_repay`, the user deposits the tokens
+> back, and `pool.reserve_a/b` is *increased* by `amount`. [...] every
+> flash loan cycle artificially inflates the internal reserve state by
+> `amount` without any real tokens backing it.
+
+**Verdict: CONFIRMED root cause. Fix approach differs from recommendation.**
+
+External AI #2 recommends: subtract `reserve_a -= amount` in
+`flash_borrow`, keep `reserve_a += amount` in `flash_repay`. This
+would balance out to a net-zero change across the borrow+repay cycle.
+
+Our fix takes the equivalent but simpler route: **remove both sides**.
+`flash_borrow` does not decrement reserves (since the pool is locked
+and no one reads reserves during the flash span), and `flash_repay`
+does not re-add them. Net effect on reserves across a flash cycle: zero.
+Net effect on store: +fee. Net effect on hook accumulators and lp
+accumulator: + portions of fee per accrue_fee split.
+
+Either fix approach produces correct economics. The simpler fix was
+chosen to minimize code surface and reduce the chance of a future
+refactor accidentally reintroducing a mutation pair that doesn't
+balance out.
+
+Two regression tests cover this:
+- `test_regression_high1_swap_claim_remove_sequence`
+- `test_regression_high1_flash_then_remove_sequence`
+
+### MEDIUM-1 (Ext#2): u128 overflow in swap numerator
+
+Matches Claude self-audit MEDIUM-1 / MEDIUM-2. **Deferred to next fix
+batch** — not blocking mainnet but should be applied before production
+for defense in depth. Fix is a straightforward u256 upgrade.
+
+### LOW-1 (Ext#2): swapper event spoofing
+
+Matches Claude Q5 response and DeepSeek LOW-1. Documented as
+untrusted. No action.
+
+### LOW-2 (Ext#2): flash_repay excess donation — NEW FINDING
+
+External AI #2 wrote:
+> `flash_repay` verifies `amount(&fa_in) >= repay_total` and then
+> immediately deposits the *entirety* of `fa_in` into the pool store.
+> The internal accounting only updates by `repay_total`. Any excess FA
+> passed by a clumsy or buggy caller will be permanently trapped in the
+> pool with no way to account for or withdraw it.
+
+**Verdict: CONFIRMED. Novel finding not caught by Claude or DeepSeek.**
+
+**Fix applied:** changed the check from `>=` to `==`. Callers must pass
+exactly `repay_total` in `fa_in` or the transaction aborts. This turns
+the footgun into a loud error. Test `test_flash_borrow_repay_happy`
+updated to pass the exact fee amount (100 units for a 1M borrow at 1
+bps).
+
+See `pool.move:flash_repay` around the updated assert.
+
+## External AI #2 overall verdict
+
+Ext#2: RED (HIGH-1 and HIGH-2 block mainnet).
+
+**After fix: both HIGH resolved, LOW-2 fixed, MEDIUM-1 deferred as a
+non-blocking batch.**
+
+## External AI #2 design questions — agreements and disagreements
+
+Most answers align with Claude self-audit and DeepSeek. One notable
+disagreement worth recording:
+
+**Q7 — Symmetric seeding rationale:**
+> **Does this harm usability?** **Yes, significantly.** While your
+> assumption is mathematically sound for preventing first-depositor
+> manipulation, it fails economically if tokens have different decimals
+> or vastly different market values (e.g., 8-decimal WBTC vs 6-decimal
+> USDC). Forcing strict 1:1 raw unit parity means the pool will
+> initialize at a radically incorrect price point. Arbitrageurs will
+> immediately extract massive value to correct the curve, violently
+> punishing the pool creator. We strongly recommend returning to
+> Uniswap's arbitrary-ratio seeding.
+
+**Project owner position (from design session logs):** the symmetric
+seeding rule is intentional and non-negotiable for Beta. The owner
+accepts the usability tradeoff. Pool creators are expected to either:
+(a) choose pairs where 1:1 raw unit parity is approximately correct
+(same-decimals, same-value), or (b) accept the immediate arb as a
+"market opening cost" priced into their pool creation.
+
+This disagreement is logged here so future auditors and external
+reviewers can see that the decision was made with full awareness of
+the economic consequences. Not a finding.
+
+## External AI #2 highlights (things we got right)
+
+External AI #2 specifically praised:
+1. Zero user-defined code hooks (no V4-style reentrancy surface)
+2. Hot-potato flash loan pattern
+3. Strict immutability (no admin pause / fee / force-extract on pools)
+4. LpPosition as NFT (clean MasterChef debt snapshot without a global
+   staking contract)
+
+These are accepted as design wins.
 
 ---
 
@@ -692,13 +941,55 @@ _To be populated by commit author `msgmsg`._
 
 ---
 
-# Consolidated summary (to be updated after all audits complete)
+# Consolidated summary (after 3 audits: Claude self + DeepSeek + External AI #2)
 
-**Unresolved HIGH:** 1 (LP fee double-counting — Claude 1st pass)
-**Unresolved MEDIUM:** 4 (swap u128 overflow, add_liquidity u128
-  overflow, add_liquidity slippage protection, hook split rounding)
-**Unresolved LOW:** 2 (test solvency invariant, accumulator rounding)
-**Informational:** 4
+## Resolved (fix applied and regression-tested)
 
-**Mainnet gate:** BLOCKED until HIGH-1 is fixed and regression
-verified on testnet, and at least 3 more independent audits complete.
+- **HIGH-1** — LP fee double-counting in `swap()` and `flash_repay()`.
+  Unanimously found by all three auditors under different framings.
+  Fix: reserves now track principal only; `reserve_fee = extra_fee + lp_fee`
+  subtracted in swap, and flash path no longer mutates reserves at all.
+  Regression covered by `test_regression_high1_swap_claim_remove_sequence`
+  and `test_regression_high1_flash_then_remove_sequence`.
+- **LOW-2** — `flash_repay` excess donation (only External AI #2).
+  Fix: check tightened from `>=` to `==`. Callers must pass exact
+  `repay_total` or the TX aborts.
+- **False positive: HIGH-1 from DeepSeek** (cast precedence). Explicit
+  outer parens added as defense-in-depth so future readers cannot
+  misread the precedence.
+
+## Unresolved (non-blocking, deferred batch)
+
+- **MEDIUM-1 / MEDIUM-2** — u128 overflow risk in swap numerator and
+  add_liquidity proportionality for adversarial reserve sizes. Fix:
+  upgrade multiplications to u256. Not exploitable under realistic
+  pool sizes.
+- **MEDIUM-3** (Claude self-audit) — `add_liquidity` lacks `min_shares_out`
+  slippage protection. Relies on frontend. Acceptable for v1 but worth
+  adding as a design improvement.
+- **MEDIUM-4** (Claude self-audit) — 50/50 hook split odd-unit rounding
+  favors marketplace slot. Documented tradeoff, not a security issue.
+- **LOW-1** (Claude self-audit) — test suite doesn't assert solvency
+  invariant. Two regression tests now cover the specific HIGH-1
+  scenarios, which is sufficient signal but not a full invariant
+  framework.
+
+## Unresolved design objections (noted, not acted on)
+
+- **Symmetric seeding (Q7)** — External AI #2 strongly recommends
+  arbitrary-ratio seeding. Project owner has committed to symmetric
+  equality as a non-negotiable design principle. Documented under
+  External AI #2's Q7 section.
+
+## Test state after fixes
+
+**33/33 tests pass** (31 original + 2 regression) on
+`aptos move test --named-addresses darbitex=<beta addr>`.
+
+## Mainnet gate status
+
+**BLOCKED** — waiting on 3 more independent audits (External AI #3
+through #5). After those pass with no unresolved HIGH findings, the
+remaining MEDIUM items should be batch-fixed, testnet re-deployed
+with the updated bytecode, a fresh end-to-end smoke test run, and
+then mainnet publish can be proposed via the 1/5 multisig.
