@@ -1,0 +1,8 @@
+contracts/build/
+contracts/.aptos/
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+node_modules/
