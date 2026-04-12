@@ -457,3 +457,32 @@ R2 findings later found by Gemini/Claude/Kimi.
 > "k-invariant is preserved (reserves are never mutated on the flash
 > path). extra_fee cap and direct-reserve-credit choice for the LP
 > portion are correct and avoid double-counting."
+
+---
+
+## Kimi K2 — Rounds 2 and 3
+
+### Round 2 (post-R1-fix)
+
+**Verdict:** 🟡 YELLOW
+
+**MEDIUM-1 (Kimi R2):** `remove_liquidity_entry` missing slippage
+protection (`min_amount_a`, `min_amount_b`). Independently confirmed
+the same finding as fresh Claude Opus 4.6 R2. Fix: added slippage
+params. Commit `428bdb9`.
+
+Also flagged: zero-value claim events (LOW, accepted as composability
+tradeoff).
+
+### Round 3 (post-R2-fix)
+
+**Verdict:** 🟢 GREEN — own findings verified closed.
+
+> "The Darbitex Beta codebase has successfully addressed all findings
+> from prior audit rounds... ready for mainnet deployment."
+
+**INFO-1 (Kimi R3):** `E_DISPROPORTIONAL` error code is now
+mathematically unreachable after the `add_liquidity` rewrite. Kept as
+defense-in-depth with clarifying comment. Commit `6965108`.
+
+All 4 R2 fixes verified correct.
