@@ -436,3 +436,24 @@ Zero findings. All prior fixes verified.
 
 Verified all 3 edits. Confirmed `sqrt(amount_a * amount_b)` is
 ratio-agnostic. Confirmed no new attack vectors from the relaxation.
+
+---
+
+## Grok 4 — Round 2
+
+**Verdict:** 🟢 GREEN
+
+> "No blocking or even medium issues found... Ship it."
+
+**Findings:** 0 HIGH / 0 MEDIUM / 0 LOW. 2 INFO nits (comment clarity
+on dust fee handling, dead MINIMUM_LIQUIDITY shares earning unclaimed
+fees — standard V2 behavior).
+
+Grok validated all R1 fixes correct, confirmed soulbound enforcement,
+canonical uniqueness, and composability layer safety. Did not catch the
+R2 findings later found by Gemini/Claude/Kimi.
+
+**Notable strength:** explicit validation of the flash loan path:
+> "k-invariant is preserved (reserves are never mutated on the flash
+> path). extra_fee cap and direct-reserve-credit choice for the LP
+> portion are correct and avoid double-counting."
