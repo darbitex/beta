@@ -553,3 +553,28 @@ fixed with per-hop `min_out` params).
 
 All R1 fixes verified correct. Detailed Q1-Q8 answers aligned with
 other auditors.
+
+---
+
+## ChatGPT (GPT-5) — Round 2
+
+**Verdict:** 🟡 YELLOW (no actionable findings)
+
+**MEDIUM-1 (ChatGPT R2): FALSE POSITIVE.** Claimed flash fees bypass
+the LP accumulator and route directly to reserves. Contradicted by
+ChatGPT's own R1 fix verification which confirmed `flash_repay` no
+longer mutates reserves. The `lp_remainder` direct-credit code was
+already removed in commit `f18db35`.
+
+**MEDIUM-2 (ChatGPT R2):** Cross-pool reentrancy lock is per-pool,
+not global. Acknowledged as standard AMM behavior. Not a bug —
+documentation recommendation only.
+
+**MEDIUM-3 (ChatGPT R2):** Dust fee rounding asymmetry. Already
+documented as accepted tradeoff.
+
+All 3 "MEDIUMs" were either false positive or pre-documented design
+notes. No code changes resulted. ChatGPT missed all R2 actionable
+findings (Gemini HIGH, fresh Claude MEDIUMs, Kimi MEDIUM).
+
+> "No critical or fund-loss vulnerabilities found."
