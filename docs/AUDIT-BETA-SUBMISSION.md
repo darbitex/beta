@@ -1,15 +1,67 @@
-# Darbitex Beta — External Audit Submission (round 4)
+# Darbitex Beta — External Audit Submission (round 5 — delta review)
 
-**Version:** Beta 0.1.0 (post-round-3 fix)
+**Version:** Beta 0.1.0 (post-round-4 + symmetric seeding removal)
 **Date:** 2026-04-12
-**Chain:** Aptos testnet (round 4 E2E verified)
+**Chain:** pending fresh testnet deploy
 **Audit package size:** 4 Move source files, ~2500 LoC total, 36/36 tests passing
-**Repo:** https://github.com/darbitex/beta
-**Round 1 testnet (superseded):** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
-**Round 2 testnet (superseded):** `0x12e8b2be0d705d5d6f1e27b50d331740461dccd2c1150504c2e38a67c6767a0f`
-**Round 3 testnet (superseded):** `0xf93e4885f581c9b0c4f2199362afa91ae595a5a424432e0b752804cfef2bd5c7`
-**Round 4 testnet (current target):** `0xe73e9fa5fdb847badcfe947d7762234ca059fa1f31aa3147bc5bc5d28cca7f80`
-**Planned mainnet publisher:** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7` (5-of-5 multisig, bootstrap threshold 1/5)
+**Repo:** https://github.com/darbitex/beta (commit `43b9084`)
+**Previous rounds' testnet addresses:** all superseded, new deploy pending
+**Planned mainnet publisher:** NEW multisig (same 5 owners as before, fresh address)
+
+## ⚠ ROUND 5 CONTEXT — design-level delta review
+
+This round is a **delta review** on a specific design change:
+
+**Removed the `assert!(amount_a == amount_b)` strict symmetric seeding
+constraint from `pool::create_pool`.** The constraint enforced raw u64
+equality between the two seeding amounts. This made the protocol
+**unusable for any token pair with different decimals** (e.g., APT
+8-decimal + USDC 6-decimal) because the single-amount API forced both
+sides to the same raw units, which gives wildly different dollar values
+when decimals differ.
+
+**What changed (3 edits):**
+
+1. `pool.move`: removed `assert!(amount_a == amount_b, E_SYMMETRIC_REQUIRED)`
+   from `create_pool` body (line ~378). Creator now freely sets the
+   initial reserve ratio. Amount validation: `amount_a > 0 && amount_b > 0`
+   (was already there).
+
+2. `pool_factory.move`: `create_canonical_pool` signature changed from
+   `(creator, meta_a, meta_b, amount: u64)` to
+   `(creator, meta_a, meta_b, amount_a: u64, amount_b: u64)`. Factory
+   now pulls distinct amounts per side and passes them to
+   `pool::create_pool(... amount_a, amount_b)`.
+
+3. `pool_factory.move`: `CanonicalPoolCreated` event schema changed
+   from `amount: u64` to `amount_a: u64, amount_b: u64`.
+
+**What did NOT change:**
+- All swap math (x*y=k, fee split, accumulators)
+- All LP logic (add_liquidity optimal-pair, remove_liquidity slippage, claim)
+- All flash loan logic (hot-potato, k-invariant, locked guard)
+- All hook NFT lifecycle (soulbound, escrow, buy_hook)
+- All router logic (per-hop min_out)
+- All view functions
+- All tests (updated signatures only, no logic changes)
+
+**What we want you to verify:**
+1. Does removing the symmetric constraint open any new attack vector?
+   (We believe no — `add_liquidity` already protects later LPs via
+   optimal-amount computation + `min_shares_out`. Creator setting a bad
+   initial ratio only hurts themselves via arb loss.)
+2. Does the `sqrt(amount_a * amount_b)` initial LP share computation
+   still work correctly when `amount_a != amount_b`? (We believe yes —
+   sqrt is agnostic to input ratio, standard V2 pattern.)
+3. Any other concern introduced by this 3-edit delta?
+
+**Background:** This constraint was labeled "accepted design tradeoff"
+in all previous 4 audit rounds and respected by all 8 auditors. The
+issue only surfaced when we tried to create a real APT/USDC pool on
+mainnet and discovered the protocol literally rejects the transaction
+because 394_000_000 APT octas != 3_330_000 USDC microunits. The first
+mainnet publish at `0x8c8f40ef...` is abandoned (pool_count=0, no users).
+This corrected version will be published fresh at a new address.
 
 ---
 
@@ -744,7 +796,6 @@ The following files constitute the complete audit scope. File order:
 
 
 ### 11.1 Move.toml
-
 ```toml
 [package]
 name = "DarbitexBeta"
@@ -761,9 +812,7 @@ subdir = "aptos-move/framework/aptos-framework"
 [addresses]
 darbitex = "0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7"
 ```
-
-### 11.2 contracts/sources/pool.move
-
+### 11.2 pool.move
 ```move
 /// Darbitex Beta — pool primitive.
 ///
@@ -804,7 +853,7 @@ module darbitex::pool {
     const E_WRONG_POOL: u64 = 6;
     const E_INSUFFICIENT_LP: u64 = 7;
     const E_WRONG_TOKEN: u64 = 8;
-    const E_SYMMETRIC_REQUIRED: u64 = 9;
+    const E_RESERVED_9: u64 = 9;  // was E_SYMMETRIC_REQUIRED in early drafts, removed
     const E_K_VIOLATED: u64 = 10;
     const E_NOT_OWNER: u64 = 11;
     const E_NO_POSITION: u64 = 12;
@@ -1141,9 +1190,16 @@ module darbitex::pool {
         amount_a: u64,
         amount_b: u64,
     ): (address, address, address, Object<LpPosition>) {
-        // Symmetric seeding enforcement: Beta rule, stricter than V1's tolerance.
-        assert!(amount_a == amount_b, E_SYMMETRIC_REQUIRED);
-        assert!(amount_a > 0, E_ZERO_AMOUNT);
+        // Creator sets the initial reserve ratio freely via (amount_a,
+        // amount_b). There is no raw-unit equality constraint — that would
+        // force mispricing for pairs with different decimals (e.g., APT
+        // 8-decimal vs USDC 6-decimal). First-depositor ratio manipulation
+        // is prevented structurally: subsequent LPs use `add_liquidity`
+        // which applies optimal-amount computation + `min_shares_out`
+        // slippage floor. A creator setting a mispriced initial ratio
+        // only hurts themselves (via arb loss on their own deposit)
+        // without harming later LPs.
+        assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
         assert!(
             object::object_address(&metadata_a) != object::object_address(&metadata_b),
             E_SAME_TOKEN,
@@ -1972,9 +2028,7 @@ module darbitex::pool {
     }
 }
 ```
-
-### 11.3 contracts/sources/pool_factory.move
-
+### 11.3 pool_factory.move
 ```move
 /// Darbitex Beta — pool factory.
 ///
@@ -2066,7 +2120,8 @@ module darbitex::pool_factory {
         metadata_a: address,
         metadata_b: address,
         creator: address,
-        amount: u64,
+        amount_a: u64,
+        amount_b: u64,
         hook_nft_1: address,
         hook_nft_2: address,
         list_price: u64,
@@ -2147,26 +2202,32 @@ module darbitex::pool_factory {
 
     // ===== Pool creation =====
 
-    /// Atomic canonical pool creation. The caller supplies seeding tokens
-    /// (`amount` of each side — symmetric seeding enforced in pool.move),
-    /// the factory pulls them into its resource account store and forwards
-    /// to the fresh pool, mints both HookNFTs, mints the creator's
-    /// LpPosition, and lists HookNFT #2 in the escrow table at the
-    /// current price.
+    /// Atomic canonical pool creation. Caller supplies seeding tokens
+    /// with independent `amount_a` and `amount_b` — the initial reserve
+    /// ratio is whatever the creator sets. For same-decimal pairs
+    /// (e.g., USDC/USDT) creators will typically pass equal amounts; for
+    /// different-decimal pairs (e.g., APT/USDC) they will pass
+    /// value-balanced amounts (3.94 APT + 3.33 USDC at market rate).
+    ///
+    /// The factory pulls seeding tokens into its resource account store
+    /// and forwards to the fresh pool, mints both HookNFTs, mints the
+    /// creator's LpPosition, and lists HookNFT #2 in the escrow table at
+    /// the current price.
     ///
     /// Duplicate protection: `object::create_named_object` aborts with
     /// EOBJECT_EXISTS if the canonical address is already occupied — so
-    /// a second create_canonical_pool call for the same (sorted) pair
+    /// a second `create_canonical_pool` call for the same (sorted) pair
     /// reverts at the Move framework level before any factory state
     /// mutation.
     public entry fun create_canonical_pool(
         creator: &signer,
         metadata_a: Object<Metadata>,
         metadata_b: Object<Metadata>,
-        amount: u64,
+        amount_a: u64,
+        amount_b: u64,
     ) acquires Factory {
         assert!(exists<Factory>(@darbitex), E_NOT_INIT);
-        assert!(amount > 0, E_ZERO);
+        assert!(amount_a > 0 && amount_b > 0, E_ZERO);
         assert_sorted(metadata_a, metadata_b);
         assert!(
             object::object_address(&metadata_a) != object::object_address(&metadata_b),
@@ -2178,10 +2239,12 @@ module darbitex::pool_factory {
         let factory_addr = factory.factory_addr;
         let creator_addr = signer::address_of(creator);
 
-        // Pull seeding tokens from creator into factory's resource account store.
-        // pool::create_pool will re-withdraw from factory into the new pool.
-        let fa_a = primary_fungible_store::withdraw(creator, metadata_a, amount);
-        let fa_b = primary_fungible_store::withdraw(creator, metadata_b, amount);
+        // Pull seeding tokens from creator into factory's resource account
+        // store. pool::create_pool will re-withdraw from factory into the
+        // new pool. Asymmetric amounts are fine — Beta leaves the initial
+        // ratio to the creator.
+        let fa_a = primary_fungible_store::withdraw(creator, metadata_a, amount_a);
+        let fa_b = primary_fungible_store::withdraw(creator, metadata_b, amount_b);
         primary_fungible_store::deposit(factory_addr, fa_a);
         primary_fungible_store::deposit(factory_addr, fa_b);
 
@@ -2200,8 +2263,8 @@ module darbitex::pool_factory {
             &ctor,
             metadata_a,
             metadata_b,
-            amount,
-            amount,
+            amount_a,
+            amount_b,
         );
 
         // List HookNFT #2 in escrow at the currently-configured price.
@@ -2219,7 +2282,8 @@ module darbitex::pool_factory {
             metadata_a: object::object_address(&metadata_a),
             metadata_b: object::object_address(&metadata_b),
             creator: creator_addr,
-            amount,
+            amount_a,
+            amount_b,
             hook_nft_1: hook_1_addr,
             hook_nft_2: hook_2_addr,
             list_price,
@@ -2375,9 +2439,7 @@ module darbitex::pool_factory {
     }
 }
 ```
-
-### 11.4 contracts/sources/router.move
-
+### 11.4 router.move
 ```move
 /// Darbitex Beta — multi-hop router.
 ///
@@ -2547,9 +2609,7 @@ module darbitex::router {
     }
 }
 ```
-
-### 11.5 contracts/sources/tests.move (reference only)
-
+### 11.5 tests.move (reference)
 ```move
 #[test_only]
 module darbitex::tests {
@@ -2709,7 +2769,7 @@ module darbitex::tests {
         let (meta_a, meta_b) = setup(framework, darbitex);
         let _ = borrow_global<TestMints>(@darbitex); // silence unused acquires lint
 
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
 
         // Canonical address computed; pool should exist there.
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
@@ -2735,7 +2795,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, _meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_a, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_a, POOL_AMOUNT, POOL_AMOUNT);
     }
 
     #[test(darbitex = @darbitex, framework = @0x1)]
@@ -2745,7 +2805,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_b, meta_a, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_b, meta_a, POOL_AMOUNT, POOL_AMOUNT);
     }
 
     #[test(darbitex = @darbitex, framework = @0x1)]
@@ -2757,8 +2817,8 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
     }
 
     #[test(darbitex = @darbitex, framework = @0x1)]
@@ -2766,7 +2826,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
 
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         let (h1_addr, h2_addr) = pool::hook_nft_addresses(pool_addr);
@@ -2784,7 +2844,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         let (h1_addr, _) = pool::hook_nft_addresses(pool_addr);
         let h1_obj = object::address_to_object<HookNFT>(h1_addr);
@@ -2796,7 +2856,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
 
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         let (_, h2_addr) = pool::hook_nft_addresses(pool_addr);
@@ -2809,7 +2869,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         assert!(pool_factory::is_hook_listed(pool_addr), 1);
         assert!(pool_factory::hook_listing_price(pool_addr) == MIN_HOOK_PRICE, 2);
@@ -2824,7 +2884,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -2847,7 +2907,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         let amount_in = 5_000_000;
@@ -2869,7 +2929,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -2884,7 +2944,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -2905,7 +2965,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         let (start_a, start_b) = pool::lp_fee_per_share(pool_addr);
@@ -2932,7 +2992,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -2954,7 +3014,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
@@ -2972,7 +3032,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3005,7 +3065,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3032,7 +3092,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3051,7 +3111,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3077,7 +3137,7 @@ module darbitex::tests {
         darbitex: &signer, provider: &signer, swapper: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3107,7 +3167,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3129,7 +3189,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, treasury: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3160,7 +3220,7 @@ module darbitex::tests {
     ) {
         let _ = user;
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         let (h1_addr, _) = pool::hook_nft_addresses(pool_addr);
         let h1_obj = object::address_to_object<HookNFT>(h1_addr);
@@ -3180,7 +3240,7 @@ module darbitex::tests {
         darbitex: &signer, buyer: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         // Buyer funded with enough APT for the default 100 APT price.
@@ -3211,7 +3271,7 @@ module darbitex::tests {
         darbitex: &signer, buyer: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         fund_apt(framework, @0xB1, MIN_HOOK_PRICE * 2);
@@ -3227,7 +3287,7 @@ module darbitex::tests {
         darbitex: &signer, buyer: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         // Drive swap volume to accrue slot 1 fees.
@@ -3260,7 +3320,7 @@ module darbitex::tests {
         let (meta_a, meta_b) = setup(framework, darbitex);
 
         // Create first pool at DEFAULT price.
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool1 = pool_factory::canonical_pool_address(meta_a, meta_b);
         let p1_listed = pool_factory::hook_listing_price(pool1);
         assert!(p1_listed == MIN_HOOK_PRICE, 1);
@@ -3296,7 +3356,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         let borrow_amount = 1_000_000;
@@ -3320,7 +3380,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         let (fa, receipt) = pool::flash_borrow(pool_addr, meta_a, 1_000_000);
@@ -3350,7 +3410,7 @@ module darbitex::tests {
         darbitex: &signer, provider: &signer, swapper: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         // Fund provider and swapper with enough tokens.
@@ -3412,7 +3472,7 @@ module darbitex::tests {
         darbitex: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         // Flash borrow a non-trivial amount, repay with principal + EXACT
@@ -3447,7 +3507,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         let (twap_a0, twap_b0, _) = pool::twap_cumulative(pool_addr);
@@ -3479,7 +3539,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
 
         account::create_account_for_test(@0x100);
@@ -3495,7 +3555,7 @@ module darbitex::tests {
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
-        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
         let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, 1_000_000);
@@ -3513,8 +3573,8 @@ module darbitex::tests {
         // Build pool A↔C and pool C↔B (sort each pair).
         let (a1, a2) = sort_pair(meta_a, meta_c);
         let (b1, b2) = sort_pair(meta_c, meta_b);
-        pool_factory::create_canonical_pool(darbitex, a1, a2, POOL_AMOUNT);
-        pool_factory::create_canonical_pool(darbitex, b1, b2, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, a1, a2, POOL_AMOUNT, POOL_AMOUNT);
+        pool_factory::create_canonical_pool(darbitex, b1, b2, POOL_AMOUNT, POOL_AMOUNT);
         let pool_ac = pool_factory::canonical_pool_address(a1, a2);
         let pool_cb = pool_factory::canonical_pool_address(b1, b2);
         assert!(pool_ac != pool_cb, 1);
@@ -3532,11 +3592,6 @@ module darbitex::tests {
     }
 }
 ```
-
 ---
-
-**End of round-4 audit submission.** Total production source:
-~1700 LoC Move across 3 files (pool + pool_factory + router),
-plus ~950 LoC test suite. 36/36 unit tests passing. Round 1 HIGH,
-round 2 HIGH + 2 MEDIUM + 1 LOW, and round 3 MEDIUM all fixed
-and on-chain verified at the round 4 testnet address.
+**End of round-5 delta audit submission.** Focus: verify the 3-edit
+symmetric-removal delta. All prior audited paths unchanged.
