@@ -486,3 +486,54 @@ mathematically unreachable after the `add_liquidity` rewrite. Kept as
 defense-in-depth with clarifying comment. Commit `6965108`.
 
 All 4 R2 fixes verified correct.
+
+---
+
+## Fresh Claude Opus 4.6 (Anthropic web) — Rounds 2, 3, and 5
+
+**Context:** Clean-context Claude session on claude.ai web, completely
+independent from the in-session Claude that developed the code. No shared
+memory, no prior conversation history, no access to design discussions.
+
+### Round 2 (post-R1-fix)
+
+**Verdict:** 🟡 YELLOW
+
+**Unique findings (3 actionable):**
+- **MEDIUM-1 (fresh Claude R2):** `remove_liquidity` missing slippage
+  protection. Independently confirmed by Kimi K2 R2. Fix: `min_amount_a`,
+  `min_amount_b` params. Commit `428bdb9`.
+- **MEDIUM-2 (fresh Claude R2 — unique):** `claim_lp_fees` and
+  `claim_hook_fees` missing `pool.locked` reentrancy guard. Defense-in-
+  depth for future FA callback hooks. Fix: added lock bracketing.
+  Commit `428bdb9`.
+- **LOW-2 (fresh Claude R2 — unique):** `buy_hook` missing factory
+  ownership assertion before payment. Fix: explicit assert.
+  Commit `428bdb9`.
+
+Fresh Claude found 3 actionable findings that in-session Claude missed —
+validating the importance of clean-context external audit even when using
+the same model family.
+
+### Round 3 (post-R2-fix)
+
+**Verdict:** 🟢 GREEN — own R2 findings verified closed.
+
+> "No blocking issues found. All round-1 and round-2 findings have been
+> correctly addressed... ready for mainnet publish."
+
+2 INFO nits (add/remove don't set reentrancy lock — explicitly noted as
+NO action needed since they mutate before withdraw; round-2 INFOs still
+apply).
+
+### Round 5 (symmetric seeding removal delta)
+
+**Verdict:** 🟢 GREEN
+
+> "The 3-edit delta is clean and minimal. The symmetric seeding constraint
+> was a usability barrier, not a security mechanism."
+
+Verified all 3 edits safe. Confirmed `sqrt(a*b)` ratio-agnostic.
+Confirmed `MINIMUM_LIQUIDITY` still prevents share inflation.
+1 INFO: stale documentation in sections 3 and Q7 still references
+symmetric seeding (documentation-only concern, noted for cleanup).
