@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { fromRaw, viewFn } from "../chain/client";
 import { loadPools, type Pool } from "../chain/pools";
 import { buildEntryTx } from "../chain/tx";
-import { PACKAGE } from "../config";
 import { useToast } from "../components/Toast";
 import { RemoveLiquidityModal } from "../components/RemoveLiquidityModal";
 import { useAddress } from "../wallet/useConnect";
@@ -40,49 +39,47 @@ export function PortfolioPage() {
         const poolMap = new Map<string, Pool>();
         for (const p of pools) poolMap.set(p.addr.toLowerCase(), p);
 
-        const owned: { object_address: string }[] = [];
         const indexerUrl = "https://api.mainnet.aptoslabs.com/v1/graphql";
         const gqlRes = await fetch(indexerUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            query: `query($owner: String!, $type: String!) {
-              current_objects(where: {owner_address: {_eq: $owner}, object_type: {_eq: $type}, is_deleted: {_eq: false}}) {
+            query: `query($owner: String!) {
+              current_objects(where: {owner_address: {_eq: $owner}, is_deleted: {_eq: false}}) {
                 object_address
               }
             }`,
-            variables: {
-              owner: address,
-              type: `${PACKAGE}::pool::LpPosition`,
-            },
+            variables: { owner: address },
           }),
         });
+        const ownedAddrs: string[] = [];
         if (gqlRes.ok) {
           const gqlData = await gqlRes.json();
           const objs = gqlData?.data?.current_objects ?? [];
-          for (const o of objs) owned.push({ object_address: o.object_address });
+          for (const o of objs) ownedAddrs.push(o.object_address);
         }
 
         const rows: Position[] = [];
-        for (const obj of owned) {
-          const objAddr = obj.object_address;
-          try {
-            const info = await viewFn<[string, string, string, string]>("pool::position_info", [], [objAddr]);
-            const poolAddr = String(info[0]);
-            const shares = Number(info[1]);
-            const pending = await viewFn<[string, string]>("pool::pending_lp_fees", [], [objAddr]);
-            rows.push({
-              objectAddr: objAddr,
-              poolAddr,
-              shares,
-              pendingA: Number(pending[0] ?? 0),
-              pendingB: Number(pending[1] ?? 0),
-              pool: poolMap.get(poolAddr.toLowerCase()) ?? null,
-            });
-          } catch (e) {
-            console.error("position load failed", objAddr, e);
-          }
-        }
+        await Promise.all(
+          ownedAddrs.map(async (objAddr) => {
+            try {
+              const info = await viewFn<[string, string, string, string]>("pool::position_info", [], [objAddr]);
+              const poolAddr = String(info[0]);
+              const shares = Number(info[1]);
+              const pending = await viewFn<[string, string]>("pool::pending_lp_fees", [], [objAddr]);
+              rows.push({
+                objectAddr: objAddr,
+                poolAddr,
+                shares,
+                pendingA: Number(pending[0] ?? 0),
+                pendingB: Number(pending[1] ?? 0),
+                pool: poolMap.get(poolAddr.toLowerCase()) ?? null,
+              });
+            } catch {
+              // Not an LpPosition — skip silently
+            }
+          }),
+        );
         if (!cancelled) setPositions(rows);
       } finally {
         if (!cancelled) setLoading(false);
