@@ -231,9 +231,9 @@ export function AboutPage() {
 
       <h2>For Builders</h2>
       <p>
-        <strong>Pool creators</strong> — call <code>create_canonical_pool(creator, meta_a, meta_b, amount)</code>.
-        Symmetric seeding enforced (<code>amount_a == amount_b</code> at initial deposit). You receive the
-        initial LpPosition NFT.
+        <strong>Pool creators</strong> — call <code>create_canonical_pool(creator, meta_a, meta_b, amount_a, amount_b)</code>.
+        Independent amounts — the initial reserve ratio is whatever you set (value-balanced for
+        different-decimal pairs like APT/USDC). You receive the initial LpPosition NFT.
       </p>
       <p>
         <strong>Aggregators</strong> — enumerate via <code>pool_factory::get_all_pools()</code>, quote via{" "}
