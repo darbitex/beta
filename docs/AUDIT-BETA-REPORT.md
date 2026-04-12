@@ -537,3 +537,19 @@ Verified all 3 edits safe. Confirmed `sqrt(a*b)` ratio-agnostic.
 Confirmed `MINIMUM_LIQUIDITY` still prevents share inflation.
 1 INFO: stale documentation in sections 3 and Q7 still references
 symmetric seeding (documentation-only concern, noted for cleanup).
+
+---
+
+## Qwen — Round 2
+
+**Verdict:** 🟢 GREEN
+
+> "GREEN – Ready for mainnet publish. No high or medium severity issues
+> remain."
+
+**LOW-1 (Qwen R2):** Router intermediate-hop slippage unchecked
+(standard AMM tradeoff, later upgraded to MEDIUM by Gemini R3 and
+fixed with per-hop `min_out` params).
+
+All R1 fixes verified correct. Detailed Q1-Q8 answers aligned with
+other auditors.
