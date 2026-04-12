@@ -88,7 +88,8 @@ module darbitex::pool_factory {
         metadata_a: address,
         metadata_b: address,
         creator: address,
-        amount: u64,
+        amount_a: u64,
+        amount_b: u64,
         hook_nft_1: address,
         hook_nft_2: address,
         list_price: u64,
@@ -169,26 +170,32 @@ module darbitex::pool_factory {
 
     // ===== Pool creation =====
 
-    /// Atomic canonical pool creation. The caller supplies seeding tokens
-    /// (`amount` of each side — symmetric seeding enforced in pool.move),
-    /// the factory pulls them into its resource account store and forwards
-    /// to the fresh pool, mints both HookNFTs, mints the creator's
-    /// LpPosition, and lists HookNFT #2 in the escrow table at the
-    /// current price.
+    /// Atomic canonical pool creation. Caller supplies seeding tokens
+    /// with independent `amount_a` and `amount_b` — the initial reserve
+    /// ratio is whatever the creator sets. For same-decimal pairs
+    /// (e.g., USDC/USDT) creators will typically pass equal amounts; for
+    /// different-decimal pairs (e.g., APT/USDC) they will pass
+    /// value-balanced amounts (3.94 APT + 3.33 USDC at market rate).
+    ///
+    /// The factory pulls seeding tokens into its resource account store
+    /// and forwards to the fresh pool, mints both HookNFTs, mints the
+    /// creator's LpPosition, and lists HookNFT #2 in the escrow table at
+    /// the current price.
     ///
     /// Duplicate protection: `object::create_named_object` aborts with
     /// EOBJECT_EXISTS if the canonical address is already occupied — so
-    /// a second create_canonical_pool call for the same (sorted) pair
+    /// a second `create_canonical_pool` call for the same (sorted) pair
     /// reverts at the Move framework level before any factory state
     /// mutation.
     public entry fun create_canonical_pool(
         creator: &signer,
         metadata_a: Object<Metadata>,
         metadata_b: Object<Metadata>,
-        amount: u64,
+        amount_a: u64,
+        amount_b: u64,
     ) acquires Factory {
         assert!(exists<Factory>(@darbitex), E_NOT_INIT);
-        assert!(amount > 0, E_ZERO);
+        assert!(amount_a > 0 && amount_b > 0, E_ZERO);
         assert_sorted(metadata_a, metadata_b);
         assert!(
             object::object_address(&metadata_a) != object::object_address(&metadata_b),
@@ -200,10 +207,12 @@ module darbitex::pool_factory {
         let factory_addr = factory.factory_addr;
         let creator_addr = signer::address_of(creator);
 
-        // Pull seeding tokens from creator into factory's resource account store.
-        // pool::create_pool will re-withdraw from factory into the new pool.
-        let fa_a = primary_fungible_store::withdraw(creator, metadata_a, amount);
-        let fa_b = primary_fungible_store::withdraw(creator, metadata_b, amount);
+        // Pull seeding tokens from creator into factory's resource account
+        // store. pool::create_pool will re-withdraw from factory into the
+        // new pool. Asymmetric amounts are fine — Beta leaves the initial
+        // ratio to the creator.
+        let fa_a = primary_fungible_store::withdraw(creator, metadata_a, amount_a);
+        let fa_b = primary_fungible_store::withdraw(creator, metadata_b, amount_b);
         primary_fungible_store::deposit(factory_addr, fa_a);
         primary_fungible_store::deposit(factory_addr, fa_b);
 
@@ -222,8 +231,8 @@ module darbitex::pool_factory {
             &ctor,
             metadata_a,
             metadata_b,
-            amount,
-            amount,
+            amount_a,
+            amount_b,
         );
 
         // List HookNFT #2 in escrow at the currently-configured price.
@@ -241,7 +250,8 @@ module darbitex::pool_factory {
             metadata_a: object::object_address(&metadata_a),
             metadata_b: object::object_address(&metadata_b),
             creator: creator_addr,
-            amount,
+            amount_a,
+            amount_b,
             hook_nft_1: hook_1_addr,
             hook_nft_2: hook_2_addr,
             list_price,

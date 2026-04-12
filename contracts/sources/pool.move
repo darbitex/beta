@@ -37,7 +37,7 @@ module darbitex::pool {
     const E_WRONG_POOL: u64 = 6;
     const E_INSUFFICIENT_LP: u64 = 7;
     const E_WRONG_TOKEN: u64 = 8;
-    const E_SYMMETRIC_REQUIRED: u64 = 9;
+    const E_RESERVED_9: u64 = 9;  // was E_SYMMETRIC_REQUIRED in early drafts, removed
     const E_K_VIOLATED: u64 = 10;
     const E_NOT_OWNER: u64 = 11;
     const E_NO_POSITION: u64 = 12;
@@ -374,9 +374,16 @@ module darbitex::pool {
         amount_a: u64,
         amount_b: u64,
     ): (address, address, address, Object<LpPosition>) {
-        // Symmetric seeding enforcement: Beta rule, stricter than V1's tolerance.
-        assert!(amount_a == amount_b, E_SYMMETRIC_REQUIRED);
-        assert!(amount_a > 0, E_ZERO_AMOUNT);
+        // Creator sets the initial reserve ratio freely via (amount_a,
+        // amount_b). There is no raw-unit equality constraint — that would
+        // force mispricing for pairs with different decimals (e.g., APT
+        // 8-decimal vs USDC 6-decimal). First-depositor ratio manipulation
+        // is prevented structurally: subsequent LPs use `add_liquidity`
+        // which applies optimal-amount computation + `min_shares_out`
+        // slippage floor. A creator setting a mispriced initial ratio
+        // only hurts themselves (via arb loss on their own deposit)
+        // without harming later LPs.
+        assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
         assert!(
             object::object_address(&metadata_a) != object::object_address(&metadata_b),
             E_SAME_TOKEN,
