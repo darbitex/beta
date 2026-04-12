@@ -286,3 +286,77 @@ sessions after a self-audit.
 **Disposition:** No fixes from this self-audit directly; the findings
 I missed were caught by external R2 auditors and addressed in commit
 `428bdb9`.
+
+---
+
+## Round 1 — DeepSeek V3
+
+**Context:** First external audit reviewer on the R1 Beta code (pre-fix).
+
+**Verdict:** 🔴 RED → subsequent R2 verdict 🟢 GREEN after round-1 fixes.
+
+**Findings raised:**
+
+- **HIGH-1 (DeepSeek): Unsafe denominator truncation in division.**
+  DeepSeek claimed `(numerator / denominator as u64)` parses as
+  `numerator / (denominator as u64)` due to Move operator precedence,
+  truncating the u128 denominator to u64 and producing artificially
+  large results. **FALSE POSITIVE.** The code compiles successfully,
+  which is empirical proof that Move parses the expression as
+  `(numerator / denominator) as u64` — the alternative parsing would
+  produce a u128/u64 type error. On-chain testnet results also match
+  the u128 division interpretation. Explicit outer parens were added
+  as cosmetic defense-in-depth for future readers (commit `314047e`).
+
+- **HIGH-2 (DeepSeek): Double counting of LP fees in swap and flash
+  loan.** **CONFIRMED.** Same finding as Claude self-audit HIGH-1 and
+  Gemini R1 HIGH. Three-way independent confirmation. Fix applied in
+  commit `f18db35` — reserves now track principal only,
+  `reserve_fee = extra_fee + lp_fee`, and flash_repay no longer mutates
+  reserves at all.
+
+- **MEDIUM-1 (DeepSeek): Dust swap `extra_fee` rounding.**
+  Observation on `extra_fee` floor-to-1 for dust swaps. The existing
+  saturation in `accrue_fee` handles this correctly (lp_portion
+  saturates to 0 when total_fee < extra_fee). Not a bug, accepted as
+  documented dust-swap behavior.
+
+- **LOW-1 (DeepSeek): Event attribution spoofing via `swapper`
+  parameter.** Acknowledged in design docs as accepted tradeoff — the
+  event `swapper` field is a non-authoritative attribution hint only.
+
+- **INFO items:** `_reserved` field usage (forward-compat placeholder),
+  `EXTRA_FEE_DENOM` zero-check (compile-time constant, never zero).
+
+**Disposition:** HIGH-2 fixed. HIGH-1 refuted. MEDIUM and LOW accepted
+as documented.
+
+---
+
+## Round 2 — DeepSeek V3
+
+**Verdict:** 🟢 GREEN — ready for mainnet publish.
+
+**Findings raised:**
+
+- **LOW-1: Potential rounding edge in `add_liquidity` tolerance** for
+  extremely small reserves (`expected_b < 20` → tolerance = 1 = 100%
+  deviation permitted). Acknowledged as edge case at near-minimum
+  liquidity; not exploitable in realistic scenarios. (Later superseded
+  by the round 2 `add_liquidity` rewrite to optimal amount
+  computation, which removed the tolerance check entirely.)
+
+- **INFO-1:** Event `swapper` spoofing — already documented.
+- **INFO-2:** `canonical_pool_address` view aborts on unsorted input
+  — by design, consistent with creation behavior.
+- **INFO-3:** 50/50 hook split odd-unit asymmetry — documented tradeoff.
+
+**Conclusion:**
+> "GREEN – Ready for mainnet publish. The code is well-structured, the
+> fixes from round 1 are correctly implemented and regression-tested,
+> and the security model is clearly defined. No high or medium severity
+> issues remain."
+
+**Disposition:** Round 1 HIGH loop closed. No further DeepSeek
+participation (ChatGPT found the R2 issues that DeepSeek missed in
+the parallel R2 batch).
