@@ -266,18 +266,23 @@ module darbitex::pool_factory {
         assert!(table::contains(&factory.hook_listings, pool_addr), E_NOT_LISTED);
         let price = table::remove(&mut factory.hook_listings, pool_addr);
 
+        // Defensive: verify the factory still owns HookNFT #2 before taking
+        // payment. Under normal operation this is always true (the factory
+        // holds the NFT in escrow from pool creation until sale), but an
+        // explicit assert produces a clearer error than a mid-TX abort
+        // deep inside object::transfer. Per audit round-2 LOW-2.
+        let (_hook_1, hook_2_addr) = pool::hook_nft_addresses(pool_addr);
+        let nft_obj = object::address_to_object<HookNFT>(hook_2_addr);
+        assert!(object::owner(nft_obj) == factory.factory_addr, E_NOT_LISTED);
+
         // Payment: buyer → operational revenue address.
         aptos_account::transfer(buyer, REVENUE_ADDR, price);
-
-        // Look up HookNFT #2 address from the pool struct.
-        let (_hook_1, hook_2_addr) = pool::hook_nft_addresses(pool_addr);
 
         // Transfer NFT object from factory resource account to buyer.
         // Factory is the current owner (set at mint time); buyer becomes
         // new owner via standard object transfer. Ungated transfer is
         // still enabled on slot 1, so no ref manipulation needed here.
         let factory_signer = account::create_signer_with_capability(&factory.signer_cap);
-        let nft_obj = object::address_to_object<HookNFT>(hook_2_addr);
         let buyer_addr = signer::address_of(buyer);
         object::transfer(&factory_signer, nft_obj, buyer_addr);
 

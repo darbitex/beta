@@ -411,8 +411,11 @@ module darbitex::tests {
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
-    #[expected_failure(abort_code = 5, location = darbitex::pool)]
-    fun test_add_liquidity_disproportional_aborts(
+    /// add_liquidity with a slippage buffer on the b-side must NOT absorb
+    /// the buffer as a silent donation. The optimal pair computation should
+    /// leave the excess b in the caller's wallet. Regression for round-2
+    /// audit HIGH-1 from Gemini.
+    fun test_add_liquidity_buffer_returns_unused(
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
@@ -421,8 +424,73 @@ module darbitex::tests {
 
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
-        // 1000:2000 is 100% skew from the 1:1 reserve ratio; tolerance 5%.
+
+        // User has exactly 200M B on their side (they were given POOL_AMOUNT
+        // of each above, then we constrain the measurement window). Pool
+        // is 100B/100B (1:1 ratio). User wants to add 100M A + 200M B as
+        // a "buffer" attempt.
+        let before_a = bal(@0x100, meta_a);
+        let before_b = bal(@0x100, meta_b);
+
+        // Pool ratio is 1:1, so amount_b_optimal for 100M A is 100M B.
+        // The 200M B desired is MORE than optimal → take if branch,
+        // use (100M A, 100M B), leave 100M B unused in caller's wallet.
         pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000, 0);
+
+        let after_a = bal(@0x100, meta_a);
+        let after_b = bal(@0x100, meta_b);
+
+        // A side: used 100M exactly
+        assert!(before_a - after_a == 100_000_000, 1);
+        // B side: buffer protected, only 100M used (not 200M)
+        assert!(before_b - after_b == 100_000_000, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    /// Buffer on the a-side instead — tight b, loose a. Else branch.
+    fun test_add_liquidity_buffer_on_a_side(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let before_a = bal(@0x100, meta_a);
+        let before_b = bal(@0x100, meta_b);
+
+        // 200M A desired but only 100M B — b is tight. Function should
+        // use (100M A, 100M B), leave 100M A in caller's wallet.
+        pool::add_liquidity(user, pool_addr, 200_000_000, 100_000_000, 0);
+
+        let after_a = bal(@0x100, meta_a);
+        let after_b = bal(@0x100, meta_b);
+        assert!(before_a - after_a == 100_000_000, 1);
+        assert!(before_b - after_b == 100_000_000, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    #[expected_failure(abort_code = 3, location = darbitex::pool)]
+    /// remove_liquidity slippage protection: setting min_amount_a above
+    /// the proportional payout must abort E_SLIPPAGE. Regression for
+    /// round-2 audit MEDIUM-1 (fresh Claude Opus 4.6).
+    fun test_remove_liquidity_min_amount_abort(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
+
+        // Position will pay out ~100M on each side proportionally.
+        // Asking for 200M floor must abort E_SLIPPAGE.
+        let (fa_a, fa_b) = pool::remove_liquidity(user, position, 200_000_000, 0);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -440,7 +508,7 @@ module darbitex::tests {
 
         let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
-        let (fa_a, fa_b) = pool::remove_liquidity(user, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(user, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
 
@@ -768,7 +836,7 @@ module darbitex::tests {
         // the store holds, and primary_fungible_store::withdraw aborts.
         // With the fix, reserve exactly matches principal and the payout
         // works cleanly.
-        let (fa_a, fa_b) = pool::remove_liquidity(provider, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(provider, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
 
@@ -816,7 +884,7 @@ module darbitex::tests {
             &provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
         );
 
-        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
     }
