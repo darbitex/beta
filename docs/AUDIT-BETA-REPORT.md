@@ -578,3 +578,61 @@ notes. No code changes resulted. ChatGPT missed all R2 actionable
 findings (Gemini HIGH, fresh Claude MEDIUMs, Kimi MEDIUM).
 
 > "No critical or fund-loss vulnerabilities found."
+
+---
+
+## Lessons learned
+
+1. **AI auditors are excellent at code correctness, poor at design
+   correctness.** All 8 auditors verified accumulator math, k-invariant,
+   reentrancy guards, and hook lifecycle. None flagged that `amount_a ==
+   amount_b` raw equality makes the protocol unusable for the most common
+   real-world pair types (heterogeneous decimals). Gemini pushed back on
+   the design but framed it as "usability concern" (LOW) rather than
+   "protocol-breaking constraint" (HIGH).
+
+2. **"Accepted design tradeoff" labels are poison for audit objectivity.**
+   Once a constraint is labeled "accepted" in the submission packet,
+   auditors defer to it. The symmetric seeding issue was documented as
+   "accepted" across 4 rounds and respected by all 8 auditors. Only a
+   real-world mainnet pool creation attempt surfaced the practical cost.
+
+3. **Smoke test with realistic parameters is non-negotiable.** 36 unit
+   tests all used same-decimal test tokens (8-dec CoinX / 8-dec CoinY).
+   None triggered the decimal mismatch. A single test with APT (8-dec)
+   and USDC (6-dec) at market-rate seeding would have caught the issue
+   before any audit round.
+
+4. **Gemini 2.5 Pro was the most valuable auditor.** Found 3 unique
+   actionable findings across 5 rounds (add_liq buffer HIGH, router
+   per-hop MEDIUM, flash_repay excess LOW). Also the only auditor to
+   explicitly push back on the symmetric seeding design, which turned
+   out to be the right call. For future Darbitex audit cycles, Gemini
+   should be the first auditor consulted.
+
+5. **Fresh-context Claude catches things same-session Claude misses.**
+   The in-session Claude (same conversation as the developer) missed 3
+   findings that the clean-context Claude (claude.ai web) caught
+   (remove slippage, claim lock, buy_hook assert). Cognitive proximity
+   to the design creates blind spots. Always use a clean session for
+   audit, even within the same model family.
+
+---
+
+## Final state
+
+**Darbitex Beta** is LIVE on Aptos mainnet at:
+
+```
+0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2
+```
+
+3 pools operational (APT/USDt, APT/USDC, USDt/USDC). Publisher multisig
+at 3/5 threshold. 36/36 unit tests. 10 independent auditors (8 AI + 2
+delta reviewers) across 5 rounds. 10 actionable findings found and fixed.
+All auditor loops closed with GREEN verdicts.
+
+Previous packages frozen:
+- `0x8c8f40ef...` (symmetric Beta, immutable)
+- `0x810693eb...` (V1 Alpha, freeze proposed, pending 3/5)
+- `0x85d1e4...` (V0 Alpha, already immutable + aborted)
