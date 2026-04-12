@@ -947,7 +947,7 @@ module darbitex::tests {
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, 1_000_000);
         router::swap_2hop(
-            user, pool_addr, pool_addr, meta_a, 1_000_000, 0, 1_000_000_000,
+            user, pool_addr, pool_addr, meta_a, 1_000_000, 0, 0, 1_000_000_000,
         );
     }
 
@@ -972,7 +972,7 @@ module darbitex::tests {
 
         let before_b = bal(@0x100, meta_b);
         router::swap_2hop(
-            user, pool_ac, pool_cb, meta_a, 1_000_000, 0, 1_000_000_000,
+            user, pool_ac, pool_cb, meta_a, 1_000_000, 0, 0, 1_000_000_000,
         );
         let after_b = bal(@0x100, meta_b);
         assert!(after_b > before_b, 2);

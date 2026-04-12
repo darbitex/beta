@@ -652,8 +652,14 @@ module darbitex::pool {
                 ((amount_b_desired as u256) * (pool.reserve_a as u256)
                     / (pool.reserve_b as u256)) as u64
             );
-            // Sanity assert — mathematically this must hold given the
-            // if-branch condition, but we check defensively.
+            // Sanity assert — mathematically this MUST hold given the
+            // if-branch condition (`amount_b_optimal > amount_b_desired`
+            // implies `amount_a_optimal < amount_a_desired` via the x*y=k
+            // invariant). Kimi K2 R3 audit correctly observed this is
+            // unreachable under normal operation. We keep the check as
+            // defense-in-depth against compiler/framework bugs,
+            // catastrophic u256→u64 rounding cliff cases, or future
+            // refactors that might violate the invariant. Zero cost.
             assert!(amount_a_optimal <= amount_a_desired, E_DISPROPORTIONAL);
             (amount_a_optimal, amount_b_desired)
         };
