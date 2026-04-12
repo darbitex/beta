@@ -173,7 +173,7 @@ full source inline). Review findings will be collated in
 
 Once the audit clears with no unaddressed HIGH findings, Beta will be
 published to mainnet via the publisher multisig at
-`0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7`.
+`0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2`.
 
 ## Related
 
