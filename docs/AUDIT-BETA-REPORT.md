@@ -2,7 +2,8 @@
 
 **Mainnet status:** 🟢 **LIVE**
 **Published:** 2026-04-12
-**Package address:** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7`
+**Package address:** `0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2`
+**Previous (symmetric, FROZEN):** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7`
 **Publish TX:** `0x9f2024e3971a11c889668770479c88f9041177c8b690b5753b69855e1cc6b2ee`
 **Init TX:** `0x8ef85ee8c2fb7342d2e03ad94d444f46a61de80762a24bcfa948870d7120d765`
 
@@ -360,3 +361,78 @@ as documented.
 **Disposition:** Round 1 HIGH loop closed. No further DeepSeek
 participation (ChatGPT found the R2 issues that DeepSeek missed in
 the parallel R2 batch).
+
+---
+
+## Gemini 2.5 Pro — Rounds 1 through 5
+
+**Most thorough auditor across the entire cycle.** Gemini participated in
+5 rounds — the only auditor to do so. Found unique HIGH and MEDIUM
+findings that no other auditor caught. Also the most conservative on
+verdicts — only gave GREEN on round 4 (after 3 prior YELLOW verdicts with
+actionable findings) and confirmed R5 delta GREEN immediately.
+
+### Round 1 (pre-fix code)
+
+**Verdict:** 🔴 RED
+
+Gemini R1 was submitted alongside DeepSeek R1. Found the same HIGH-1
+(LP fee double-counting) independently. Also uniquely flagged:
+
+- **LOW-2 (Gemini R1):** `flash_repay` accepts excess payment and
+  silently donates to pool. Fixed in commit `f18db35` (strict `==` check).
+
+Gemini also pushed back strongly on symmetric seeding (Q7):
+> "We strongly recommend returning to Uniswap's arbitrary-ratio seeding."
+
+This pushback was documented but overridden by the project owner at the
+time. Gemini was ultimately proven correct when mainnet pool creation
+failed due to the decimal mismatch. The constraint was removed in round 5.
+
+### Round 2 (post-R1-fix)
+
+**Verdict:** 🟡 YELLOW
+
+**Unique HIGH finding:**
+- **HIGH-1 (Gemini R2 — unique):** `add_liquidity` silently donated
+  unused slippage buffer to existing LPs. User providing `(amount_a,
+  amount_b + buffer)` would have the full `amount_b` withdrawn while
+  only getting shares proportional to the optimal pair. The excess was
+  absorbed into reserves as an uncompensated donation.
+
+**Fix:** Uniswap V2 router-style optimal amount computation. Only
+optimal amounts withdrawn; unused buffer stays in caller's wallet.
+Commit `428bdb9`.
+
+Gemini was the ONLY auditor across all 8 to catch this. Grok, Qwen,
+DeepSeek, ChatGPT, Kimi, and both Claude sessions missed it.
+
+### Round 3 (post-R2-fix)
+
+**Verdict:** 🟡 YELLOW
+
+**MEDIUM-1 (Gemini R3):** Router multi-hop intermediate hops passed
+`min_out = 0`, allowing sandwich extraction even with a user-set
+final-hop floor. Per-hop `min_out` parameters added. Commit `6965108`.
+
+All R2 fixes verified correct.
+
+### Round 4 (post-R3-fix)
+
+**Verdict:** 🟢 GREEN — mainnet gate cleared.
+
+> "The developer has shown exceptional diligence in resolving findings
+> across four audit rounds... the package is cleared for production."
+
+Zero findings. All prior fixes verified.
+
+### Round 5 (symmetric seeding removal delta)
+
+**Verdict:** 🟢 GREEN
+
+> "The delta is exceptionally clean. Removing the strict symmetric
+> constraint resolves a critical real-world usability blocker...
+> Darbitex Beta is officially cleared for mainnet publication."
+
+Verified all 3 edits. Confirmed `sqrt(amount_a * amount_b)` is
+ratio-agnostic. Confirmed no new attack vectors from the relaxation.
