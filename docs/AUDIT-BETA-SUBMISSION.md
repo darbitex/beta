@@ -1,18 +1,74 @@
-# Darbitex Beta — External Audit Submission (round 3)
+# Darbitex Beta — External Audit Submission (round 4)
 
-**Version:** Beta 0.1.0 (post-round-2 fix)
+**Version:** Beta 0.1.0 (post-round-3 fix)
 **Date:** 2026-04-12
-**Chain:** Aptos testnet (round 3 E2E verified)
+**Chain:** Aptos testnet (round 4 E2E verified)
 **Audit package size:** 4 Move source files, ~2500 LoC total, 36/36 tests passing
 **Repo:** https://github.com/darbitex/beta
 **Round 1 testnet (superseded):** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
 **Round 2 testnet (superseded):** `0x12e8b2be0d705d5d6f1e27b50d331740461dccd2c1150504c2e38a67c6767a0f`
-**Round 3 testnet (current target):** `0xf93e4885f581c9b0c4f2199362afa91ae595a5a424432e0b752804cfef2bd5c7`
+**Round 3 testnet (superseded):** `0xf93e4885f581c9b0c4f2199362afa91ae595a5a424432e0b752804cfef2bd5c7`
+**Round 4 testnet (current target):** `0xe73e9fa5fdb847badcfe947d7762234ca059fa1f31aa3147bc5bc5d28cca7f80`
 **Planned mainnet publisher:** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7` (5-of-5 multisig, bootstrap threshold 1/5)
 
 ---
 
-## Round 2 audit summary (findings addressed in this packet)
+## Round 3 audit summary (findings addressed in this packet)
+
+**Round 3 audits completed with 3 auditors on the post-round-2 code:**
+
+- **Kimi K2 R3:** 🟢 GREEN. All 4 round-2 fixes verified correct. One
+  INFO nit on `E_DISPROPORTIONAL` being a defensive-only assertion
+  after the `add_liquidity` rewrite. Accepted — kept the assert with
+  explanatory comment as cheap defense-in-depth.
+- **Fresh Claude Opus 4.6 R3 (Anthropic web):** 🟢 GREEN. Their own R2
+  findings (MED remove slippage, MED claim lock, LOW buy_hook) all
+  verified closed. Two INFOs: (1) add_liquidity / remove_liquidity
+  don't set reentrancy lock — explicitly noted as NO action needed,
+  because these functions fully mutate state before the FA withdraw;
+  (2) round-2 INFOs still apply, accepted as documented tradeoffs.
+- **Gemini R3:** 🟡 YELLOW. HIGH (add_liq buffer) from R2 verified
+  fixed. New **MEDIUM-1: router multi-hop intermediate hops unprotected
+  from sandwich extraction**. The router passed `min_out = 0` for
+  intermediate hops, enforcing slippage only on the final hop. Fixed
+  in this packet.
+
+**Round 3 fix applied (addressed in this R4 packet):**
+
+- **MEDIUM (Gemini R3):** Router multi-hop intermediate slippage.
+  `swap_2hop_composable` now takes `min_out_hop1, min_out_hop2`;
+  `swap_3hop_composable` takes `min_out_hop1, min_out_hop2,
+  min_out_hop3`. Entry wrappers updated with matching per-hop params.
+  Callers that have precomputed per-hop expected outputs pass tight
+  floors; aggregators that only know the final expected output pass
+  0 for intermediate hops and compute a conservative final min_out
+  based on aggregate expected slippage. This is the strict Uniswap V3
+  router pattern — V2 and the original Beta R3 submission used "min_out
+  only on final hop" (industry default) which allowed intermediate
+  sandwich extraction. Beta R4 now provides better primitive-level
+  protection than V2.
+
+- **INFO (Kimi K2 R3):** Clarifying comment added to
+  `E_DISPROPORTIONAL` sanity assertion in `add_liquidity` explaining
+  it is kept as defense-in-depth against compiler/framework bugs or
+  future refactors.
+
+**Round 3 auditor verdict table:**
+
+| Auditor | Code reviewed | Verdict | Findings |
+|---|---|---|---|
+| Kimi K2 R3 | R3 packet (post-R2-fix) | 🟢 GREEN | 1 INFO (commented, not code change) |
+| Fresh Claude Opus 4.6 R3 | R3 packet | 🟢 GREEN | 2 INFO (no action needed) |
+| Gemini R3 | R3 packet | 🟡 YELLOW | 1 MEDIUM router per-hop → **fixed in R4 packet** |
+
+Round 4 reviewers should verify the round-3 router fix is correctly
+implemented. The R4 testnet address above has the updated bytecode
+with on-chain E2E verification including the round-2 buffer
+preservation regression test.
+
+---
+
+## Round 2 audit summary (findings addressed in round 3 packet)
 
 This submission is the **round 3** audit packet. Two prior rounds with
 7 independent AI auditors (Claude in-session, DeepSeek R1/R2, Gemini R1/R2,
@@ -682,6 +738,7 @@ The following files constitute the complete audit scope. File order:
 3. `contracts/sources/pool_factory.move`
 4. `contracts/sources/router.move`
 5. `contracts/sources/tests.move` (reference only, not in scope)
+
 
 
 
@@ -1362,8 +1419,14 @@ module darbitex::pool {
                 ((amount_b_desired as u256) * (pool.reserve_a as u256)
                     / (pool.reserve_b as u256)) as u64
             );
-            // Sanity assert — mathematically this must hold given the
-            // if-branch condition, but we check defensively.
+            // Sanity assert — mathematically this MUST hold given the
+            // if-branch condition (`amount_b_optimal > amount_b_desired`
+            // implies `amount_a_optimal < amount_a_desired` via the x*y=k
+            // invariant). Kimi K2 R3 audit correctly observed this is
+            // unreachable under normal operation. We keep the check as
+            // defense-in-depth against compiler/framework bugs,
+            // catastrophic u256→u64 rounding cliff cases, or future
+            // refactors that might violate the invariant. Zero cost.
             assert!(amount_a_optimal <= amount_a_desired, E_DISPROPORTIONAL);
             (amount_a_optimal, amount_b_desired)
         };
@@ -2368,36 +2431,48 @@ module darbitex::router {
         pool::swap(pool_addr, swapper, fa_in, min_out)
     }
 
-    /// 2-hop chained swap. Intermediate hop has min_out = 0 (slippage
-    /// only checked on the final hop). Pools must be distinct.
+    /// 2-hop chained swap. Each hop enforces its own min_out to prevent
+    /// sandwich extraction on intermediate pools. Pass 0 for any hop
+    /// where the caller does not care about intermediate slippage.
+    /// Per audit round-3 MEDIUM-1 (Gemini): unprotected intermediate
+    /// hops could be drained by MEV sandwich leaving just enough output
+    /// on the final hop to satisfy a loose user min_out. Per-hop
+    /// protection mitigates this at the primitive layer — callers that
+    /// have pre-computed expected outputs for each hop can pass tight
+    /// floors; aggregators can pass 0 if they compute the final min_out
+    /// conservatively based on overall expected route output.
     public fun swap_2hop_composable(
         pool1: address,
         pool2: address,
         swapper: address,
         fa_in: FungibleAsset,
-        min_out: u64,
+        min_out_hop1: u64,
+        min_out_hop2: u64,
     ): FungibleAsset {
         assert!(pool1 != pool2, E_SAME_POOL);
-        let fa_mid = pool::swap(pool1, swapper, fa_in, 0);
-        pool::swap(pool2, swapper, fa_mid, min_out)
+        let fa_mid = pool::swap(pool1, swapper, fa_in, min_out_hop1);
+        pool::swap(pool2, swapper, fa_mid, min_out_hop2)
     }
 
     /// 3-hop chained swap. All three pools must be distinct from each
-    /// other. Only the final hop enforces slippage.
+    /// other. Each hop enforces its own min_out floor (audit round-3
+    /// MEDIUM-1). Pass 0 for hops where no protection is needed.
     public fun swap_3hop_composable(
         pool1: address,
         pool2: address,
         pool3: address,
         swapper: address,
         fa_in: FungibleAsset,
-        min_out: u64,
+        min_out_hop1: u64,
+        min_out_hop2: u64,
+        min_out_hop3: u64,
     ): FungibleAsset {
         assert!(pool1 != pool2, E_SAME_POOL);
         assert!(pool2 != pool3, E_SAME_POOL);
         assert!(pool1 != pool3, E_SAME_POOL);
-        let fa_1 = pool::swap(pool1, swapper, fa_in, 0);
-        let fa_2 = pool::swap(pool2, swapper, fa_1, 0);
-        pool::swap(pool3, swapper, fa_2, min_out)
+        let fa_1 = pool::swap(pool1, swapper, fa_in, min_out_hop1);
+        let fa_2 = pool::swap(pool2, swapper, fa_1, min_out_hop2);
+        pool::swap(pool3, swapper, fa_2, min_out_hop3)
     }
 
     // =========================================================
@@ -2425,25 +2500,30 @@ module darbitex::router {
         primary_fungible_store::deposit(addr, fa_out);
     }
 
-    /// 2-hop swap with deadline and store integration.
+    /// 2-hop swap with deadline and store integration. Per-hop min_out
+    /// floors prevent intermediate sandwich extraction.
     public entry fun swap_2hop(
         swapper: &signer,
         pool1: address,
         pool2: address,
         metadata_in: Object<Metadata>,
         amount_in: u64,
-        min_out: u64,
+        min_out_hop1: u64,
+        min_out_hop2: u64,
         deadline: u64,
     ) {
         assert_deadline(deadline);
         assert!(amount_in > 0, E_ZERO_AMOUNT);
         let addr = signer::address_of(swapper);
         let fa_in = primary_fungible_store::withdraw(swapper, metadata_in, amount_in);
-        let fa_out = swap_2hop_composable(pool1, pool2, addr, fa_in, min_out);
+        let fa_out = swap_2hop_composable(
+            pool1, pool2, addr, fa_in, min_out_hop1, min_out_hop2,
+        );
         primary_fungible_store::deposit(addr, fa_out);
     }
 
-    /// 3-hop swap with deadline and store integration.
+    /// 3-hop swap with deadline and store integration. Per-hop min_out
+    /// floors prevent intermediate sandwich extraction.
     public entry fun swap_3hop(
         swapper: &signer,
         pool1: address,
@@ -2451,14 +2531,18 @@ module darbitex::router {
         pool3: address,
         metadata_in: Object<Metadata>,
         amount_in: u64,
-        min_out: u64,
+        min_out_hop1: u64,
+        min_out_hop2: u64,
+        min_out_hop3: u64,
         deadline: u64,
     ) {
         assert_deadline(deadline);
         assert!(amount_in > 0, E_ZERO_AMOUNT);
         let addr = signer::address_of(swapper);
         let fa_in = primary_fungible_store::withdraw(swapper, metadata_in, amount_in);
-        let fa_out = swap_3hop_composable(pool1, pool2, pool3, addr, fa_in, min_out);
+        let fa_out = swap_3hop_composable(
+            pool1, pool2, pool3, addr, fa_in, min_out_hop1, min_out_hop2, min_out_hop3,
+        );
         primary_fungible_store::deposit(addr, fa_out);
     }
 }
@@ -3416,7 +3500,7 @@ module darbitex::tests {
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, 1_000_000);
         router::swap_2hop(
-            user, pool_addr, pool_addr, meta_a, 1_000_000, 0, 1_000_000_000,
+            user, pool_addr, pool_addr, meta_a, 1_000_000, 0, 0, 1_000_000_000,
         );
     }
 
@@ -3441,7 +3525,7 @@ module darbitex::tests {
 
         let before_b = bal(@0x100, meta_b);
         router::swap_2hop(
-            user, pool_ac, pool_cb, meta_a, 1_000_000, 0, 1_000_000_000,
+            user, pool_ac, pool_cb, meta_a, 1_000_000, 0, 0, 1_000_000_000,
         );
         let after_b = bal(@0x100, meta_b);
         assert!(after_b > before_b, 2);
@@ -3451,8 +3535,8 @@ module darbitex::tests {
 
 ---
 
-**End of round-3 audit submission.** Total production source:
+**End of round-4 audit submission.** Total production source:
 ~1700 LoC Move across 3 files (pool + pool_factory + router),
-plus ~950 LoC test suite. 36/36 unit tests passing. Round 1 HIGH
-and Round 2 HIGH + 2 MEDIUM + 1 LOW all fixed and on-chain verified
-at the round 3 testnet address.
+plus ~950 LoC test suite. 36/36 unit tests passing. Round 1 HIGH,
+round 2 HIGH + 2 MEDIUM + 1 LOW, and round 3 MEDIUM all fixed
+and on-chain verified at the round 4 testnet address.
