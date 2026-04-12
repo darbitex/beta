@@ -1,22 +1,91 @@
-# Darbitex Beta — External Audit Submission (round 2)
+# Darbitex Beta — External Audit Submission (round 3)
 
-**Version:** Beta 0.1.0 (post-round-1 fix)
+**Version:** Beta 0.1.0 (post-round-2 fix)
 **Date:** 2026-04-12
-**Chain:** Aptos testnet (round 2 E2E verified)
-**Audit package size:** 4 Move source files, ~2440 LoC total
+**Chain:** Aptos testnet (round 3 E2E verified)
+**Audit package size:** 4 Move source files, ~2500 LoC total, 36/36 tests passing
 **Repo:** https://github.com/darbitex/beta
-**Round 1 testnet (superseded, do NOT audit):** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
-**Round 2 testnet (current target):** `0x12e8b2be0d705d5d6f1e27b50d331740461dccd2c1150504c2e38a67c6767a0f`
+**Round 1 testnet (superseded):** `0x6ba3a6eff27a8a729008d16550aa41d18bacf03e28d2daf9de192a10426a213a`
+**Round 2 testnet (superseded):** `0x12e8b2be0d705d5d6f1e27b50d331740461dccd2c1150504c2e38a67c6767a0f`
+**Round 3 testnet (current target):** `0xf93e4885f581c9b0c4f2199362afa91ae595a5a424432e0b752804cfef2bd5c7`
 **Planned mainnet publisher:** `0x8c8f40ef0b924657461253e7aa54a15fdfd8a3069e1404ba6ffda2223ddcadb7` (5-of-5 multisig, bootstrap threshold 1/5)
+
+---
+
+## Round 2 audit summary (findings addressed in this packet)
+
+This submission is the **round 3** audit packet. Two prior rounds with
+7 independent AI auditors (Claude in-session, DeepSeek R1/R2, Gemini R1/R2,
+Grok 4 R2, fresh Claude Opus 4.6 R2, Kimi K2 R2, Qwen R2) found and
+addressed the following issues in the round 2 fix batch.
+
+**Round 2 findings addressed:**
+
+- **HIGH (Gemini R2):** `add_liquidity` silently donated unused slippage
+  buffer from the loose side to existing LPs. A user who provided
+  (amount_a, amount_b + buffer) would have the full amount_b withdrawn
+  from their wallet while only receiving LP shares proportional to the
+  optimal pair. **Fix:** rewrote `add_liquidity` to use Uniswap V2
+  router-style optimal amount computation. Compute `amount_b_optimal`
+  from `amount_a_desired` at the current reserve ratio; whichever side
+  is tight, use that side's desired amount and the computed optimal on
+  the loose side. Only the optimal amounts are withdrawn from the
+  caller — the unused buffer stays in their wallet. The 5% tolerance
+  disproportional check is removed since the optimal computation
+  handles any ratio gracefully. **On-chain verified** at round 3 testnet:
+  a user providing (100M A, 200M B) on a 1:1 pool has only
+  (100M A, 100M B) withdrawn, 100M B stays in their wallet.
+
+- **MEDIUM (fresh Claude Opus 4.6 R2 + Kimi K2 R2, independent):**
+  `remove_liquidity` had no slippage protection, allowing sandwich
+  extraction on active pools. **Fix:** added `min_amount_a` and
+  `min_amount_b` parameters to both composable `remove_liquidity` and
+  entry wrapper. Proportional reserve payouts (excluding fee claims)
+  must meet the floors or the function aborts `E_SLIPPAGE`. This
+  matches the protection already provided on `add_liquidity` via
+  `min_shares_out`.
+
+- **MEDIUM (fresh Claude Opus 4.6 R2):** `claim_lp_fees` and
+  `claim_hook_fees` did not set `pool.locked` during execution.
+  Currently safe because Aptos FA operations have no callback hooks,
+  but if a future framework update introduces dispatchable callbacks
+  on FA transfers these functions could become reentrant. **Fix:**
+  added defensive `pool.locked = true/false` bracketing around the
+  withdraw calls in both claim functions for consistency with swap and
+  flash_borrow.
+
+- **LOW (fresh Claude Opus 4.6 R2):** `buy_hook` did not verify factory
+  ownership of HookNFT #2 before taking payment. Under normal operation
+  this is always true, but an explicit assert produces a clearer error
+  than a mid-TX abort inside `object::transfer`. **Fix:** added
+  `assert!(object::owner(nft_obj) == factory.factory_addr, E_NOT_LISTED)`
+  before the APT transfer.
+
+**Round 2 auditor verdicts by code version reviewed:**
+
+| Auditor | Code reviewed | Verdict | Unique findings |
+|---|---|---|---|
+| Grok 4 | R1 packet (post-R1-fix) | 🟢 GREEN | 0 findings, 2 INFO nits |
+| Gemini | R1 packet | 🟡 YELLOW | HIGH add_liq buffer (unique, verified on-chain) |
+| Fresh Claude Opus 4.6 | R1 packet | 🟡 YELLOW | MED remove slippage, MED claim lock, LOW buy_hook assert |
+| Kimi K2 | R1 packet | 🟡 YELLOW | MED remove slippage (independently confirms fresh Claude) |
+| Qwen | R1 packet | 🟢 GREEN | LOW router intermediate slippage only (known AMM tradeoff) |
+| DeepSeek | R1 packet | 🟢 GREEN | LOW tolerance edge only |
+
+**3 auditors (Grok, Qwen, DeepSeek) verdicted GREEN on the R1 packet
+code.** 3 others (Gemini, fresh Claude, Kimi) found issues the first 3
+missed. All unique findings have been addressed in this R3 packet.
+
+Round 3 reviewers should verify the round-2 fixes are correctly
+implemented and focus on any remaining surface. The HIGH-1 fix from
+Gemini is verified on-chain at the round 3 testnet address above.
 
 ---
 
 ## Round 1 audit summary (findings already addressed)
 
-This submission is the **round 2** audit packet. A first round of audits
-(Claude self-audit, DeepSeek, Gemini) found and addressed the following
-issues. Reviewers in round 2 should verify the fixes are correct and
-focus on remaining surface.
+A first round of audits (Claude in-session self-audit, DeepSeek R1,
+Gemini R1) found and addressed the following issues:
 
 **Resolved (fixed + regression tested + on-chain verified):**
 
@@ -613,6 +682,7 @@ The following files constitute the complete audit scope. File order:
 3. `contracts/sources/pool_factory.move`
 4. `contracts/sources/router.move`
 5. `contracts/sources/tests.move` (reference only, not in scope)
+
 
 
 
@@ -1239,53 +1309,77 @@ module darbitex::pool {
 
     // ===== Liquidity =====
 
-    /// Add liquidity to an existing pool. Must match current reserve ratio
-    /// within 5% tolerance. Mints a new LpPosition NFT to the provider; each
-    /// add_liquidity call mints a separate position (no merging).
+    /// Add liquidity to an existing pool. Mints a new LpPosition NFT to
+    /// the provider; each add_liquidity call mints a separate position
+    /// (no merging).
     ///
-    /// `min_shares_out` is the slippage floor. If the computed shares are
-    /// below this value, the call aborts with `E_SLIPPAGE`. Callers who do
-    /// not care about exact share counts can pass 0, but any caller that
-    /// trusts its own ratio computation should pass a meaningful floor.
-    /// Added per audit MEDIUM-3 (Claude + Gemini round 1).
+    /// `amount_a_desired` and `amount_b_desired` are the MAXIMUM amounts
+    /// the caller is willing to deposit on each side. The function picks
+    /// the Uniswap V2-router-style optimal pair: the side whose desired
+    /// amount more tightly matches the current reserve ratio is used in
+    /// full, and the other side uses only the proportional amount. The
+    /// unused buffer on the "loose" side stays in the caller's wallet.
+    /// This prevents the silent buffer donation bug from round 2 audit
+    /// HIGH-1 (Gemini).
+    ///
+    /// `min_shares_out` is the slippage floor on minted shares. Aborts
+    /// with `E_SLIPPAGE` if fewer shares would be minted. Callers that
+    /// do not care about exact share counts can pass 0.
     public fun add_liquidity(
         provider: &signer,
         pool_addr: address,
-        amount_a: u64,
-        amount_b: u64,
+        amount_a_desired: u64,
+        amount_b_desired: u64,
         min_shares_out: u64,
     ): Object<LpPosition> acquires Pool {
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
-        assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
+        assert!(amount_a_desired > 0 && amount_b_desired > 0, E_ZERO_AMOUNT);
 
         let pool = borrow_global_mut<Pool>(pool_addr);
         assert!(!pool.locked, E_LOCKED);
 
         update_twap(pool);
 
-        // Proportionality check vs current reserves, 5% tolerance. u256
-        // intermediate to prevent overflow for adversarial reserves
-        // (audit MEDIUM-2).
-        let expected_b = (
-            ((amount_a as u256) * (pool.reserve_b as u256) / (pool.reserve_a as u256)) as u64
+        // Uniswap V2 router-style optimal amount computation. Given the
+        // current reserve ratio (reserve_a : reserve_b), figure out which
+        // of the two desired amounts is the tight side and use the other
+        // side's proportional amount. The unused buffer stays in the
+        // caller's wallet — we never withdraw more than the optimal pair.
+        let amount_b_optimal = (
+            ((amount_a_desired as u256) * (pool.reserve_b as u256)
+                / (pool.reserve_a as u256)) as u64
         );
-        let tolerance = if (expected_b < 20) { 1 } else { expected_b / 20 };
-        let amount_b_u128 = amount_b as u128;
-        let expected_b_u128 = expected_b as u128;
-        let tolerance_u128 = tolerance as u128;
-        assert!(
-            amount_b_u128 + tolerance_u128 >= expected_b_u128
-                && amount_b_u128 <= expected_b_u128 + tolerance_u128,
-            E_DISPROPORTIONAL,
-        );
+        let (amount_a, amount_b) = if (amount_b_optimal <= amount_b_desired) {
+            // amount_a is the tight side: use it in full, use only
+            // amount_b_optimal of the b-side, leaving
+            // (amount_b_desired - amount_b_optimal) in the caller's wallet.
+            (amount_a_desired, amount_b_optimal)
+        } else {
+            // amount_b is the tight side: compute the optimal a to match
+            // amount_b_desired at the current ratio. This value is
+            // guaranteed ≤ amount_a_desired by the ratio constraint.
+            let amount_a_optimal = (
+                ((amount_b_desired as u256) * (pool.reserve_a as u256)
+                    / (pool.reserve_b as u256)) as u64
+            );
+            // Sanity assert — mathematically this must hold given the
+            // if-branch condition, but we check defensively.
+            assert!(amount_a_optimal <= amount_a_desired, E_DISPROPORTIONAL);
+            (amount_a_optimal, amount_b_desired)
+        };
 
-        // Compute shares minted proportionally to the smaller of the two
-        // sides. u256 intermediate (audit MEDIUM-2).
+        assert!(amount_a > 0 && amount_b > 0, E_ZERO_AMOUNT);
+
+        // Compute shares minted proportionally. With the optimal pair
+        // computed above, lp_a and lp_b are equal within integer
+        // rounding; we take min as a defensive measure.
         let lp_a = (
-            ((amount_a as u256) * (pool.lp_supply as u256) / (pool.reserve_a as u256)) as u64
+            ((amount_a as u256) * (pool.lp_supply as u256)
+                / (pool.reserve_a as u256)) as u64
         );
         let lp_b = (
-            ((amount_b as u256) * (pool.lp_supply as u256) / (pool.reserve_b as u256)) as u64
+            ((amount_b as u256) * (pool.lp_supply as u256)
+                / (pool.reserve_b as u256)) as u64
         );
         let shares = if (lp_a < lp_b) { lp_a } else { lp_b };
         assert!(shares > 0, E_ZERO_AMOUNT);
@@ -1293,7 +1387,8 @@ module darbitex::pool {
 
         let provider_addr = signer::address_of(provider);
 
-        // Pull FA from provider into pool store.
+        // Pull ONLY the optimal amounts from provider. The buffer stays
+        // in their wallet.
         let fa_a = primary_fungible_store::withdraw(provider, pool.metadata_a, amount_a);
         let fa_b = primary_fungible_store::withdraw(provider, pool.metadata_b, amount_b);
         primary_fungible_store::deposit(pool_addr, fa_a);
@@ -1303,8 +1398,8 @@ module darbitex::pool {
         pool.reserve_b = pool.reserve_b + amount_b;
         pool.lp_supply = pool.lp_supply + shares;
 
-        // Snapshot the current per_share as this position's debt so the holder
-        // only earns on swaps after the deposit moment.
+        // Snapshot the current per_share as this position's debt so the
+        // holder only earns on swaps after the deposit moment.
         let debt_a = pool.lp_fee_per_share_a;
         let debt_b = pool.lp_fee_per_share_b;
 
@@ -1315,8 +1410,8 @@ module darbitex::pool {
             pool_addr,
             provider: provider_addr,
             position_addr,
-            amount_a,
-            amount_b,
+            amount_a,  // actual amount used, not desired
+            amount_b,  // actual amount used, not desired
             shares_minted: shares,
             timestamp: timestamp::now_seconds(),
         });
@@ -1326,9 +1421,18 @@ module darbitex::pool {
 
     /// Composable remove_liquidity. Burns the LpPosition and returns the
     /// proportional reserves PLUS any accumulated LP fees in one shot.
+    ///
+    /// `min_amount_a` and `min_amount_b` are slippage floors on the
+    /// proportional reserve payout (not including fee claims). A sandwich
+    /// attacker can shift the reserve ratio between TX submission and
+    /// execution, so LPs should specify a minimum they are willing to
+    /// accept. Callers who do not care can pass 0. Added per audit
+    /// round-2 MEDIUM-1 (fresh Claude Opus 4.6 audit).
     public fun remove_liquidity(
         provider: &signer,
         position: Object<LpPosition>,
+        min_amount_a: u64,
+        min_amount_b: u64,
     ): (FungibleAsset, FungibleAsset) acquires Pool, LpPosition {
         let provider_addr = signer::address_of(provider);
         assert!(object::owner(position) == provider_addr, E_NOT_OWNER);
@@ -1366,6 +1470,12 @@ module darbitex::pool {
             ((shares as u256) * (pool.reserve_b as u256) / (pool.lp_supply as u256)) as u64
         );
 
+        // Slippage protection on principal withdrawal (not fees). Sandwich
+        // attacks on active pools can shift reserve ratios; this check
+        // lets LPs bail if the ratio moved against them.
+        assert!(amount_a >= min_amount_a, E_SLIPPAGE);
+        assert!(amount_b >= min_amount_b, E_SLIPPAGE);
+
         pool.lp_supply = pool.lp_supply - shares;
         assert!(pool.lp_supply >= MINIMUM_LIQUIDITY, E_INSUFFICIENT_LIQUIDITY);
         pool.reserve_a = pool.reserve_a - amount_a;
@@ -1401,6 +1511,12 @@ module darbitex::pool {
     /// Harvest accumulated LP fees without touching the position's shares.
     /// Resets the position's debt snapshot to current per_share so future
     /// accumulation starts from zero.
+    ///
+    /// Defense-in-depth: sets `pool.locked = true` during execution even
+    /// though Aptos FA operations don't currently have callback hooks that
+    /// could re-enter. If a future framework update adds FA dispatch
+    /// hooks, this function is already safe. Per audit round-2 MEDIUM-2
+    /// (fresh Claude Opus 4.6 audit).
     public fun claim_lp_fees(
         provider: &signer,
         position: Object<LpPosition>,
@@ -1416,6 +1532,7 @@ module darbitex::pool {
 
         let pool = borrow_global_mut<Pool>(pos.pool_addr);
         assert!(!pool.locked, E_LOCKED);
+        pool.locked = true;
 
         update_twap(pool);
 
@@ -1437,6 +1554,8 @@ module darbitex::pool {
             fungible_asset::zero(pool.metadata_b)
         };
 
+        pool.locked = false;
+
         event::emit(LpFeesClaimed {
             pool_addr: pos.pool_addr,
             position_addr,
@@ -1452,6 +1571,9 @@ module darbitex::pool {
     /// Harvest hook fees for whichever slot the NFT owner holds. Resets the
     /// absolute bucket for that slot. Works for both treasury slot 0 and
     /// escrow/market slot 1.
+    ///
+    /// Defense-in-depth: sets `pool.locked = true` during execution. Per
+    /// audit round-2 MEDIUM-2 (fresh Claude Opus 4.6 audit).
     public fun claim_hook_fees(
         caller: &signer,
         nft: Object<HookNFT>,
@@ -1469,6 +1591,7 @@ module darbitex::pool {
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
         let pool = borrow_global_mut<Pool>(pool_addr);
         assert!(!pool.locked, E_LOCKED);
+        pool.locked = true;
 
         let (fees_a, fees_b) = if (slot == 0) {
             let a = pool.hook_1_fee_a;
@@ -1495,6 +1618,8 @@ module darbitex::pool {
         } else {
             fungible_asset::zero(pool.metadata_b)
         };
+
+        pool.locked = false;
 
         event::emit(HookFeesClaimed {
             pool_addr,
@@ -1652,13 +1777,16 @@ module darbitex::pool {
     }
 
     /// Entry variant of remove_liquidity. Deposits both returned FAs back to
-    /// provider's primary store.
+    /// provider's primary store. `min_amount_a` / `min_amount_b` are
+    /// slippage floors — pass 0 for no protection.
     public entry fun remove_liquidity_entry(
         provider: &signer,
         position: Object<LpPosition>,
+        min_amount_a: u64,
+        min_amount_b: u64,
     ) acquires Pool, LpPosition {
         let provider_addr = signer::address_of(provider);
-        let (fa_a, fa_b) = remove_liquidity(provider, position);
+        let (fa_a, fa_b) = remove_liquidity(provider, position, min_amount_a, min_amount_b);
         primary_fungible_store::deposit(provider_addr, fa_a);
         primary_fungible_store::deposit(provider_addr, fa_b);
     }
@@ -2053,18 +2181,23 @@ module darbitex::pool_factory {
         assert!(table::contains(&factory.hook_listings, pool_addr), E_NOT_LISTED);
         let price = table::remove(&mut factory.hook_listings, pool_addr);
 
+        // Defensive: verify the factory still owns HookNFT #2 before taking
+        // payment. Under normal operation this is always true (the factory
+        // holds the NFT in escrow from pool creation until sale), but an
+        // explicit assert produces a clearer error than a mid-TX abort
+        // deep inside object::transfer. Per audit round-2 LOW-2.
+        let (_hook_1, hook_2_addr) = pool::hook_nft_addresses(pool_addr);
+        let nft_obj = object::address_to_object<HookNFT>(hook_2_addr);
+        assert!(object::owner(nft_obj) == factory.factory_addr, E_NOT_LISTED);
+
         // Payment: buyer → operational revenue address.
         aptos_account::transfer(buyer, REVENUE_ADDR, price);
-
-        // Look up HookNFT #2 address from the pool struct.
-        let (_hook_1, hook_2_addr) = pool::hook_nft_addresses(pool_addr);
 
         // Transfer NFT object from factory resource account to buyer.
         // Factory is the current owner (set at mint time); buyer becomes
         // new owner via standard object transfer. Ungated transfer is
         // still enabled on slot 1, so no ref manipulation needed here.
         let factory_signer = account::create_signer_with_capability(&factory.signer_cap);
-        let nft_obj = object::address_to_object<HookNFT>(hook_2_addr);
         let buyer_addr = signer::address_of(buyer);
         object::transfer(&factory_signer, nft_obj, buyer_addr);
 
@@ -2747,8 +2880,11 @@ module darbitex::tests {
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
-    #[expected_failure(abort_code = 5, location = darbitex::pool)]
-    fun test_add_liquidity_disproportional_aborts(
+    /// add_liquidity with a slippage buffer on the b-side must NOT absorb
+    /// the buffer as a silent donation. The optimal pair computation should
+    /// leave the excess b in the caller's wallet. Regression for round-2
+    /// audit HIGH-1 from Gemini.
+    fun test_add_liquidity_buffer_returns_unused(
         darbitex: &signer, user: &signer, framework: &signer,
     ) acquires TestMints {
         let (meta_a, meta_b) = setup(framework, darbitex);
@@ -2757,8 +2893,73 @@ module darbitex::tests {
 
         account::create_account_for_test(@0x100);
         give_tokens(@0x100, POOL_AMOUNT);
-        // 1000:2000 is 100% skew from the 1:1 reserve ratio; tolerance 5%.
+
+        // User has exactly 200M B on their side (they were given POOL_AMOUNT
+        // of each above, then we constrain the measurement window). Pool
+        // is 100B/100B (1:1 ratio). User wants to add 100M A + 200M B as
+        // a "buffer" attempt.
+        let before_a = bal(@0x100, meta_a);
+        let before_b = bal(@0x100, meta_b);
+
+        // Pool ratio is 1:1, so amount_b_optimal for 100M A is 100M B.
+        // The 200M B desired is MORE than optimal → take if branch,
+        // use (100M A, 100M B), leave 100M B unused in caller's wallet.
         pool::add_liquidity(user, pool_addr, 100_000_000, 200_000_000, 0);
+
+        let after_a = bal(@0x100, meta_a);
+        let after_b = bal(@0x100, meta_b);
+
+        // A side: used 100M exactly
+        assert!(before_a - after_a == 100_000_000, 1);
+        // B side: buffer protected, only 100M used (not 200M)
+        assert!(before_b - after_b == 100_000_000, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    /// Buffer on the a-side instead — tight b, loose a. Else branch.
+    fun test_add_liquidity_buffer_on_a_side(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let before_a = bal(@0x100, meta_a);
+        let before_b = bal(@0x100, meta_b);
+
+        // 200M A desired but only 100M B — b is tight. Function should
+        // use (100M A, 100M B), leave 100M A in caller's wallet.
+        pool::add_liquidity(user, pool_addr, 200_000_000, 100_000_000, 0);
+
+        let after_a = bal(@0x100, meta_a);
+        let after_b = bal(@0x100, meta_b);
+        assert!(before_a - after_a == 100_000_000, 1);
+        assert!(before_b - after_b == 100_000_000, 2);
+    }
+
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    #[expected_failure(abort_code = 3, location = darbitex::pool)]
+    /// remove_liquidity slippage protection: setting min_amount_a above
+    /// the proportional payout must abort E_SLIPPAGE. Regression for
+    /// round-2 audit MEDIUM-1 (fresh Claude Opus 4.6).
+    fun test_remove_liquidity_min_amount_abort(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
+
+        // Position will pay out ~100M on each side proportionally.
+        // Asking for 200M floor must abort E_SLIPPAGE.
+        let (fa_a, fa_b) = pool::remove_liquidity(user, position, 200_000_000, 0);
+        primary_fungible_store::deposit(@0x100, fa_a);
+        primary_fungible_store::deposit(@0x100, fa_b);
     }
 
     #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
@@ -2776,7 +2977,7 @@ module darbitex::tests {
 
         let position = pool::add_liquidity(user, pool_addr, 100_000_000, 100_000_000, 0);
 
-        let (fa_a, fa_b) = pool::remove_liquidity(user, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(user, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
 
@@ -3104,7 +3305,7 @@ module darbitex::tests {
         // the store holds, and primary_fungible_store::withdraw aborts.
         // With the fix, reserve exactly matches principal and the payout
         // works cleanly.
-        let (fa_a, fa_b) = pool::remove_liquidity(provider, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(provider, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
 
@@ -3152,7 +3353,7 @@ module darbitex::tests {
             &provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
         );
 
-        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position);
+        let (fa_a, fa_b) = pool::remove_liquidity(&provider, position, 0, 0);
         primary_fungible_store::deposit(@0x100, fa_a);
         primary_fungible_store::deposit(@0x100, fa_b);
     }
@@ -3250,7 +3451,8 @@ module darbitex::tests {
 
 ---
 
-**End of round-2 audit submission.** Total production source:
-~1650 LoC Move across 3 files (pool + pool_factory + router),
-plus ~850 LoC test suite. All 34 unit tests passing. HIGH-1 fix
-verified on-chain.
+**End of round-3 audit submission.** Total production source:
+~1700 LoC Move across 3 files (pool + pool_factory + router),
+plus ~950 LoC test suite. 36/36 unit tests passing. Round 1 HIGH
+and Round 2 HIGH + 2 MEDIUM + 1 LOW all fixed and on-chain verified
+at the round 3 testnet address.
