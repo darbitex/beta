@@ -170,3 +170,119 @@ author name (see commit log for attribution trail).
 Each auditor section is added in a separate commit under that auditor's
 git author name. See `git log -- docs/AUDIT-BETA-REPORT.md` for the
 attribution trail.
+
+---
+
+## Round 1 — Claude Opus 4.6 in-session self-audit
+
+**Context:** I (Claude Opus 4.6, the model writing this report and
+authoring the Beta codebase in-session with the project owner) performed
+a self-audit at the completion of the R1 codebase, before distributing
+to external AI reviewers. This is not a substitute for external audit —
+it was a first pass to catch obvious issues and produce a reviewable
+baseline. Conflict-of-interest disclaimer: I authored the code I
+reviewed.
+
+**Verdict:** 🔴 RED — blocking HIGH found before distribution.
+
+**Findings raised:**
+
+- **HIGH-1 — LP fee double-counting in `swap()` and `flash_repay()`**
+  The swap path subtracted only `extra_fee` (hook portion) from reserves
+  before mutation, leaving the `lp_portion` of the fee inside reserves.
+  Simultaneously, `accrue_fee` credited the same `lp_portion` to
+  `lp_fee_per_share`. LPs would earn twice — once via reserve growth
+  (compounding into the curve), once via explicit accumulator claim. On
+  any claim-then-remove sequence the reserve tracker would diverge from
+  actual store balance, eventually bricking `remove_liquidity` for
+  subsequent LPs.
+
+  A nearly identical bug existed in `flash_repay`: the function added
+  the borrowed amount back to reserves (but `flash_borrow` never
+  subtracted, so this inflated reserves) AND credited `lp_remainder`
+  to reserves while `accrue_fee` had already credited the same amount
+  to `lp_fee_per_share`.
+
+  Fix: (a) swap reserve update uses `reserve_fee = extra_fee + lp_fee`
+  instead of just `extra_fee`; (b) flash_repay removes all direct
+  reserve mutations and routes fees exclusively through `accrue_fee`.
+
+- **MEDIUM-1 — swap math u128 overflow for adversarial reserves.**
+  `(amount_in * 9999 * reserve_out)` can exceed `u128::MAX` for large
+  token supplies. Not exploitable for theft (Move aborts on overflow,
+  not silent corruption), but DoS vector for pools with near-max
+  reserves. Fix: upgrade all intermediate multiplications to u256.
+
+- **MEDIUM-2 — add_liquidity proportionality check u128 overflow.**
+  Same class of issue as MEDIUM-1. `amount_a * reserve_b` can exceed
+  u128. Fix: u256 intermediates.
+
+- **MEDIUM-3 — add_liquidity missing slippage protection.**
+  Callers couldn't enforce minimum share counts, exposing them to
+  sandwich attacks on the pool ratio between submission and execution.
+  Fix: added `min_shares_out: u64` parameter.
+
+- **MEDIUM-4 — 50/50 hook split odd-unit rounding asymmetry.**
+  For `extra_fee = 1` (dust regime), hook_1 gets 0 and hook_2 gets 1.
+  Accepted as documented tradeoff — dust rounds in favor of the tradable
+  slot, negligible economic impact. Not fixed.
+
+- **LOW-1 — test suite didn't assert solvency invariant.**
+  No test checked `store_balance == reserves + hook_buckets + pending_lp_fees`.
+  Had such a test existed, HIGH-1 would have been caught immediately.
+  Fix: added two regression tests for the specific HIGH-1 trigger
+  sequences (swap-claim-remove and flash-then-remove).
+
+- **LOW-2 — router multi-hop intermediate slippage unchecked.**
+  Standard AMM router tradeoff, matches Uniswap V2 behavior. Noted as
+  design trade-off. (Later upgraded to a MEDIUM finding by Gemini R3
+  and fixed in commit `6965108`.)
+
+- **INFO items:** accumulator rounding direction (pool favor, standard),
+  `update_twap` redundant calls in claim paths (cosmetic), swapper
+  event field spoofable (acknowledged, non-authoritative).
+
+**Disposition:** All HIGH and MEDIUM findings addressed in commits
+`f18db35` (R1 HIGH-1 + LOW-2) and `314047e` (R1 MEDIUM batch). Verified
+by 36/36 tests passing and on-chain regression sequences at subsequent
+testnet deployments.
+
+---
+
+## Round 2 — Claude Opus 4.6 in-session (R2 self-audit)
+
+**Context:** Second self-audit pass on the post-R1-fix code, run in
+parallel with the first external audit distribution.
+
+**Verdict:** 🟢 GREEN — no blocking findings on my own reading.
+
+**Findings raised:**
+
+- **LOW-A — `update_twap` called redundantly in claim paths.** The
+  claim functions don't mutate reserves, so bumping `twap_cumulative`
+  is a no-op contribution (same reserve × elapsed time that the next
+  reserve-mutating call would accumulate anyway). Minor gas waste.
+  Accepted.
+
+- **LOW-B — router multi-hop intermediate slippage unchecked.** Same
+  as R1 LOW-2. Standard AMM router tradeoff. Later upgraded by Gemini
+  R3 and fixed.
+
+- **INFO-A — factory `hook_listings` table unbounded growth.** Self-
+  regulating by buy pressure. Not a security concern.
+
+- **INFO-B — event `swapper: address` field caller-controlled.**
+  Already documented as non-authoritative. No change.
+
+**Notable miss:** I did NOT catch the `add_liquidity` buffer-donation
+bug (Gemini R2 HIGH), the `remove_liquidity` slippage gap (Fresh Claude
++ Kimi R2 MED), the claim reentrancy lock (Fresh Claude R2 MED), or the
+`buy_hook` ownership assertion (Fresh Claude R2 LOW). My second in-
+session pass had a blind spot for user-footgun UX issues that later
+external auditors caught. This pattern (in-session Claude too close to
+own design) informed the decision to always distribute to fresh external
+sessions after a self-audit.
+
+**Disposition:** No fixes from this self-audit directly; the findings
+I missed were caught by external R2 auditors and addressed in commit
+`428bdb9`.
