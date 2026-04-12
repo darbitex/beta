@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#ff8800" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="description" content="Darbitex Beta — Immutable Pool AMM on Aptos. 0.01% fee. Hook NFTs at birth. Zero admin." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Darbitex Beta</title>
+    <script>
+      (function () {
+        var KEY = "dbx_boot_retry";
+        var MAX = 5;
+        var done = false;
+        function fail(reason) {
+          if (done) return;
+          var n = parseInt(sessionStorage.getItem(KEY) || "0", 10);
+          if (n < MAX) {
+            sessionStorage.setItem(KEY, String(n + 1));
+            setTimeout(function () { location.reload(); }, 700);
+          } else {
+            done = true;
+            document.documentElement.innerHTML =
+              '<body style="margin:0;padding:40px;background:#0a0a0a;color:#ff8800;font:14px/1.6 ui-monospace,monospace;min-height:100vh">' +
+              '<h1 style="font-size:18px;margin-bottom:12px">Darbitex Beta — cold start</h1>' +
+              '<p style="color:#e0e0e0">Walrus portal is still warming this edge. Try again in 30\u201360 seconds.</p>' +
+              '<p style="color:#888;font-size:12px;margin-top:16px">Reason: ' + reason + '</p>' +
+              '<p style="margin-top:16px"><a href="/" style="color:#ff8800">Retry manually</a></p></body>';
+          }
+        }
+        window.addEventListener("error", function (e) {
+          var t = e && e.target;
+          if (t && (t.tagName === "SCRIPT" || t.tagName === "LINK")) {
+            fail("chunk load failed: " + (t.src || t.href || "").split("/").pop());
+          }
+        }, true);
+        window.__dbx_mounted = function () {
+          sessionStorage.removeItem(KEY);
+          done = true;
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

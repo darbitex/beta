@@ -1,0 +1,10 @@
+{
+  "name": "Darbitex Beta",
+  "short_name": "Beta",
+  "description": "Immutable Pool AMM on Aptos — 0.01% fee, hook NFTs at birth, zero admin",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#ff8800",
+  "orientation": "portrait"
+}

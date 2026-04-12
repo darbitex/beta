@@ -1,0 +1,282 @@
+import { PACKAGE } from "../config";
+
+export function AboutPage() {
+  const explorer = `https://explorer.aptoslabs.com/account/${PACKAGE}/modules/code/pool_factory?network=mainnet`;
+  return (
+    <div className="manifesto">
+      <h1>Darbitex Beta</h1>
+      <div className="tagline">Immutable Pool AMM on Aptos — 0.01% fee · hook-at-birth NFTs · zero admin</div>
+
+      <div className="num-grid">
+        <div className="num-box"><div className="big">1</div><div className="label">BPS FEE</div></div>
+        <div className="num-box"><div className="big">2</div><div className="label">HOOK NFTS / POOL</div></div>
+        <div className="num-box"><div className="big">3</div><div className="label">CORE MODULES</div></div>
+        <div className="num-box"><div className="big">8</div><div className="label">INDEPENDENT AUDITS</div></div>
+      </div>
+
+      <h2>What is Darbitex Beta?</h2>
+      <p>
+        Darbitex Beta is an automated market maker on <strong>Aptos</strong> with a radical simplification of the
+        classic AMM model. Pools are <span className="highlight">truly immutable</span> after creation. Hooks are{" "}
+        <span className="highlight">NFTs minted atomically at pool birth</span>, not auctioned post-hoc. Every
+        operation lives at the pool-primitive level for maximum composability — satellite packages can build on top
+        without a core upgrade.
+      </p>
+      <p>
+        Beta is a clean-slate successor to Darbitex Alpha (V1). V1's auction-based hook system shipped with known
+        HIGH findings in its lifecycle. Rather than patch the buggy paths in place, Beta rebuilds the core from
+        scratch to eliminate the entire class of attacks. V1 Alpha remains frozen as legacy at a separate address.
+      </p>
+
+      <h2>Mainnet — LIVE</h2>
+      <p><strong>Package address:</strong></p>
+      <div style={{
+        fontFamily: "var(--mono, ui-monospace, monospace)", fontSize: 12, wordBreak: "break-all",
+        background: "#111", padding: "8px 12px", borderRadius: 3, border: "1px solid #1a1a1a", display: "inline-block",
+      }}>
+        0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2
+      </div>
+      <p style={{ marginTop: 14 }}><strong>Factory resource account:</strong></p>
+      <div style={{
+        fontFamily: "var(--mono, ui-monospace, monospace)", fontSize: 12, wordBreak: "break-all",
+        background: "#111", padding: "8px 12px", borderRadius: 3, border: "1px solid #1a1a1a", display: "inline-block",
+      }}>
+        0x6eb58b234ba5eb09d4b257086b49997003e89b7ee00b4a1c915923279868da2c
+      </div>
+      <p style={{ marginTop: 14 }}><strong>Live pools:</strong></p>
+      <table className="arch-table">
+        <thead><tr><th>Pair</th><th>Seeding</th></tr></thead>
+        <tbody>
+          <tr><td>APT / USDt</td><td style={{ color: "#888" }}>$3.33 + $3.33</td></tr>
+          <tr><td>APT / USDC</td><td style={{ color: "#888" }}>$3.33 + $3.33</td></tr>
+          <tr><td>USDt / USDC</td><td style={{ color: "#888" }}>$1 + $1</td></tr>
+        </tbody>
+      </table>
+      <p className="dim" style={{ fontSize: 12, marginTop: 14 }}>
+        Published 2026-04-12 via 3-of-5 multisig. 36/36 unit tests passing. 10 independent AI auditors across
+        5 audit rounds, unanimous GREEN final verdict.
+      </p>
+
+      <h2>Why 1 BPS?</h2>
+      <p>
+        Total swap fee is <span className="highlight">0.01%</span> — that's <strong>30x cheaper</strong> than Uniswap
+        V2 (0.3%). Flash loans charge the same 1 bps rate. Designed for high-frequency, high-volume trading where fee
+        sensitivity matters.
+      </p>
+      <p>
+        <strong>Fee split:</strong> approximately 0.9 bps to LP providers via a per-share accumulator (MasterChef V2
+        pattern), and 0.1 bps to the hook pot — split 50/50 between the two hook NFTs attached to every pool. There
+        is <strong>no separate protocol fee stream</strong>. Treasury revenue comes exclusively from holding the
+        treasury-slot hook NFT.
+      </p>
+
+      <h2>Hook NFTs — No Auctions</h2>
+      <p>
+        Beta eliminates V1's auction system entirely. Instead, every pool is created with{" "}
+        <strong>two HookNFT objects minted atomically</strong>:
+      </p>
+      <p>
+        <strong>Slot 0 — Treasury soulbound.</strong> Minted to the Darbitex treasury multisig at pool creation,
+        permanently non-transferable via <code>disable_ungated_transfer</code>. Earns 50% of hook fees forever.
+      </p>
+      <p>
+        <strong>Slot 1 — Escrow tradable.</strong> Minted into the factory escrow at a fixed{" "}
+        <span className="highlight">100 APT</span> listing price (admin-configurable for future pools, immutable
+        per-listing). Anyone can call <code>buy_hook</code> to purchase it. After purchase, the buyer owns the
+        NFT and earns the other 50% of hook fees. Natural price discovery emerges from accumulating unclaimed
+        fees — the longer a pool runs without a buyer, the more the NFT is worth.
+      </p>
+
+      <h2>Immutable Pools</h2>
+      <p>
+        Zero admin surface at the pool level. After <code>create_canonical_pool</code> returns,{" "}
+        <strong>no function anywhere in Beta</strong> can alter the pool's fee, curve, pair, or hook assignment.
+        There is no <code>pause</code>, no <code>unpause</code>, no <code>withdraw_protocol_fee</code>, no{" "}
+        <code>admin_force_remove_hook</code>.
+      </p>
+      <p>
+        The only admin surface in the entire package is <code>set_hook_price</code>, which updates the default
+        listing price for <em>future</em> pools — existing listings keep their locked-in price. One knob,
+        future-only effect.
+      </p>
+
+      <h2>LP as NFT</h2>
+      <p>
+        LP positions are <strong>Aptos objects (NFTs)</strong>, not fungible coins. Each deposit mints a new{" "}
+        <code>LpPosition</code> object owned by the provider. Fee math uses the MasterChef V2 pattern: a global{" "}
+        <code>lp_fee_per_share</code> accumulator on the pool, and a per-position debt snapshot on the NFT.
+      </p>
+      <p>
+        <strong>Claim without withdraw</strong> — LPs can harvest accumulated fees at any time without touching
+        their principal position. Remove liquidity burns the NFT and returns proportional reserves plus unclaimed
+        fees in one shot. Positions are freely transferable (send LP to a multisig or treasury if you want).
+      </p>
+      <p>
+        <code>add_liquidity</code> uses a Uniswap V2 router-style <strong>optimal amount computation</strong> —
+        if you provide a slippage buffer on one side, only the optimal amount is withdrawn and the unused buffer
+        stays in your wallet.
+      </p>
+
+      <h2>Universal Flash Loans</h2>
+      <p>
+        Every pool supports flash loans at the same 1 bps rate. Flash receipts are{" "}
+        <span className="highlight">hot-potato structs</span> (no <code>drop</code> / <code>store</code> /{" "}
+        <code>key</code> abilities) — must be consumed via <code>flash_repay</code> in the same transaction or
+        the TX aborts. The <code>{"k_after >= k_before"}</code> invariant is checked in <code>u256</code> to
+        prevent rounding attacks. The <code>pool.locked</code> reentrancy guard blocks all swap / LP / flash
+        operations during the borrow span.
+      </p>
+
+      <h2>Architecture — 3 core modules</h2>
+      <table className="arch-table">
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>pool</td>
+            <td style={{ color: "#888" }}>Pool struct, LpPosition (inline), HookNFT (inline), swap, LP, claim fees, flash loan, TWAP oracle</td>
+          </tr>
+          <tr>
+            <td>pool_factory</td>
+            <td style={{ color: "#888" }}>Canonical pool creation, hook NFT escrow, buy_hook, pool registry</td>
+          </tr>
+          <tr>
+            <td>router</td>
+            <td style={{ color: "#888" }}>Multi-hop execution with per-hop slippage protection</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="dim" style={{ fontSize: 12 }}>
+        V1's <code>hook_wrapper</code>, <code>bridge</code>, and <code>lp_coin</code> modules are removed in
+        Beta. Their functionality is either integrated into the core (bridge → pair-agnostic pool, lp_coin → inline
+        LpPosition) or eliminated (hook_wrapper is obsolete without the auction system).
+      </p>
+
+      <h2>Two-Layer Composability</h2>
+      <p>
+        Every operation has two forms: a <strong>composable primitive</strong> (<code>public fun</code>, takes and
+        returns <code>FungibleAsset</code>, no <code>&amp;signer</code>) and an <strong>entry wrapper</strong>{" "}
+        (<code>public entry fun</code>, handles deadline + store integration for direct user transactions). External
+        satellite packages compose the primitive layer via cross-package <code>use darbitex::pool</code> — no core
+        upgrade needed to build aggregators, arb bots, farming, or meta-routers on top of Beta.
+      </p>
+      <p>
+        The composable swap primitive doesn't take a signer because the <code>FungibleAsset</code> in the caller's
+        hand is already proof of authorization — Move's type system guarantees the caller had to withdraw it from
+        a primary store to have it.
+      </p>
+
+      <h2>Audit — 8 Independent AI Auditors</h2>
+      <p>
+        Beta passed <strong>4 audit rounds</strong> with 8 independent AI auditors: DeepSeek, Gemini, Grok 4,
+        Kimi K2, Qwen, ChatGPT (GPT-5), fresh Claude Opus 4.6 (clean-context session), and in-session Claude
+        self-audits. Across all rounds the auditors collectively found and addressed{" "}
+        <strong>10 actionable findings</strong>:
+      </p>
+      <p>
+        <strong>Round 1 (pre-fix):</strong> 1 HIGH (LP fee double-counting — unanimous across 3 auditors),
+        3 MEDIUMs (u128 overflow, add_liquidity slippage), 1 LOW (flash repay excess donation), plus 1 false
+        positive on cast precedence (DeepSeek).
+      </p>
+      <p>
+        <strong>Round 2 (post-R1-fix):</strong> 1 HIGH (Gemini — add_liquidity buffer donation), 2 MEDIUMs
+        (remove_liquidity slippage — unique to fresh Claude and confirmed by Kimi; claim reentrancy lock —
+        fresh Claude), 1 LOW (buy_hook ownership assert — fresh Claude).
+      </p>
+      <p>
+        <strong>Round 3 (post-R2-fix):</strong> 1 MEDIUM (Gemini — router multi-hop intermediate slippage).
+        Kimi and fresh Claude closed their loops with <strong>GREEN</strong>.
+      </p>
+      <p>
+        <strong>Round 4 (post-R3-fix):</strong> Gemini returned{" "}
+        <strong className="highlight">GREEN</strong>, all findings closed, mainnet gate cleared.
+      </p>
+      <p>
+        <strong>36/36 unit tests passing.</strong> On-chain regression verification at 4 successive testnet
+        addresses across the iteration cycle. Full audit report committed in the repo under per-auditor commit
+        authors.
+      </p>
+      <p className="dim" style={{ fontSize: 12 }}>Audits are aids, not guarantees. Read the code.</p>
+
+      <h2>Fully Decentralized</h2>
+      <p>Darbitex Beta has <strong>no servers</strong>. The entire stack is decentralized:</p>
+      <p>
+        <strong>Smart contracts</strong> — on Aptos mainnet, published via a 1-of-5 bootstrap multisig,
+        threshold raising to 3-of-5 after the first pool is stable.
+      </p>
+      <p>
+        <strong>Frontend</strong> — hosted on <span className="highlight">Walrus</span> (decentralized storage
+        on Sui). No AWS, no Vercel, no single point of failure.
+      </p>
+      <p>
+        <strong>Backend</strong> — there is none. All state lives on-chain. Pool data, reserves, LP positions,
+        hook accumulators — all queried directly from Aptos RPC.
+      </p>
+
+      <h2>Governance</h2>
+      <p>
+        Beta is published from a <strong>3-of-5 multisig</strong>. Package{" "}
+        <code>upgrade_policy = "compatible"</code> — struct layout changes would force a fresh package publish
+        at a new address (same pattern V1 → Beta followed).
+      </p>
+      <p>
+        <code>ADMIN</code>, <code>TREASURY</code>, and <code>REVENUE</code> addresses are hardcoded as Move
+        constants in the source — changing any requires a package upgrade, which itself requires the multisig
+        threshold. Intentional minimum-trust design.
+      </p>
+
+      <h2>For Builders</h2>
+      <p>
+        <strong>Pool creators</strong> — call <code>create_canonical_pool(creator, meta_a, meta_b, amount)</code>.
+        Symmetric seeding enforced (<code>amount_a == amount_b</code> at initial deposit). You receive the
+        initial LpPosition NFT.
+      </p>
+      <p>
+        <strong>Aggregators</strong> — enumerate via <code>pool_factory::get_all_pools()</code>, quote via{" "}
+        <code>pool::get_amount_out()</code>, and compose via the <code>public fun</code> primitives:{" "}
+        <code>pool::swap()</code> for single hops, <code>router::swap_2hop_composable()</code> /{" "}
+        <code>swap_3hop_composable()</code> for multi-hop with per-hop slippage floors.
+      </p>
+      <p>
+        <strong>LPs</strong> — <code>pool::add_liquidity()</code> with desired amounts (auto-optimal, any buffer
+        stays in your wallet), claim fees without withdrawing via <code>pool::claim_lp_fees()</code>, or exit
+        via <code>pool::remove_liquidity()</code> with <code>min_amount_a/b</code> slippage floors.
+      </p>
+      <p>
+        <strong>Satellite packages</strong> — Beta's two-layer composability contract means future features
+        (meta router with bridge registry, arb bots, farming, governance) all ship as independent packages
+        depending on Beta core via cross-package import. No core upgrade needed.
+      </p>
+
+      <h2>Links</h2>
+      <div className="links-row">
+        <a href={explorer} target="_blank" rel="noopener noreferrer">Beta Package</a>
+        <a href="https://github.com/darbitex/beta" target="_blank" rel="noopener noreferrer">Source Code</a>
+        <a href="https://github.com/darbitex/beta/blob/main/docs/AUDIT-BETA-SUBMISSION.md" target="_blank" rel="noopener noreferrer">Audit Packet</a>
+        <a href="https://github.com/darbitex/beta/blob/main/docs/AUDIT-BETA-REPORT.md" target="_blank" rel="noopener noreferrer">Audit Report</a>
+        <a href="https://github.com/darbitex/alpha-v1" target="_blank" rel="noopener noreferrer">V1 Alpha (legacy)</a>
+      </div>
+
+      <div
+        style={{
+          marginTop: 40,
+          padding: 20,
+          borderTop: "1px solid #1a1a1a",
+          textAlign: "center",
+          fontSize: 11,
+          color: "#555",
+          lineHeight: 1.8,
+        }}
+      >
+        <strong style={{ color: "#ff8800" }}>Disclaimer:</strong> Experimental DeFi software.{" "}
+        <strong>Use at your own discretion.</strong> Do not deposit more than you can afford to lose. Darbitex
+        Beta is LIVE on Aptos mainnet; a Beta-native frontend is being built separately from the V1 Alpha
+        frontend.
+      </div>
+    </div>
+  );
+}
