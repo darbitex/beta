@@ -121,6 +121,7 @@ a:hover { text-decoration: underline; }
 }
 .badge-fee { background: #1a1a1a; color: #666; }
 .badge-hook { color: #ff8800; border: 1px solid #ff8800; }
+.badge-sold { color: #888; border: 1px solid #333; }
 .pool-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
   margin-top: 12px; font-size: 12px;

@@ -145,7 +145,7 @@ export function SwapPage() {
             <div>
               <span>Rate</span>
               <span className="val">
-                1 {inSym} = {(quote.amountOut / amountNum).toFixed(6)} {outSym}
+                1 {inSym} = {amountNum > 0 ? (quote.amountOut / amountNum).toFixed(6) : "—"} {outSym}
               </span>
             </div>
             <div>
