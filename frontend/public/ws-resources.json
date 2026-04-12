@@ -10,5 +10,6 @@
   "routes": {
     "/*": "/index.html"
   },
-  "site_name": "Darbitex Beta"
+  "site_name": "Darbitex Beta",
+  "object_id": "0xb16acba9216bbd31584385fa34c628c94dba3fa794669a6559d09e6ce702b648"
 }
