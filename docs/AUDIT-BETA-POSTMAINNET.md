@@ -573,13 +573,116 @@ While `swap_with_deadline` enforces `amount_in > 0`, the internal `swap` functio
 
 ---
 
+## Round 6 (post-mainnet) — ChatGPT (GPT-5)
+
+**Auditor:** ChatGPT / GPT-5 (OpenAI)
+**Date:** 2026-04-13
+**Verdict:** 🟠 ORANGE (self-reported B+) — 2 HIGH / 4 MEDIUM / 3 LOW / design notes
+
+### Strengths validated (verbatim)
+
+- **Reserve accounting (HIGH-1 fix):** Correct — reserves now track principal only. Fees routed via LP accumulator + hook buckets. No double counting in `swap()` or `flash_repay()`.
+- **Flash loan design:** Uses hot-potato receipt → cannot be dropped. Enforces exact repayment equality. Correct invariant intent (`k_before`).
+- **u256 usage:** Good coverage for overflow-critical paths.
+- **Optimal liquidity provision:** Prevents silent donation bug (Uniswap V2 parity).
+
+### HIGH findings
+
+#### H-1 — Missing explicit k-invariant enforcement in `flash_repay`
+
+**Auditor's claim:** "You *record* `k_before`, but I do NOT see enforcement… no visible check like `assert!(k_after >= k_before, E_K_VIOLATED);`"
+
+**Impact (per auditor):** "An attacker can borrow token A, manipulate pool via external state (if composability expands later), repay nominally but break invariant silently." Rated HIGH.
+
+**Recommendation (per auditor):**
+```move
+let k_after = (pool.reserve_a as u256) * (pool.reserve_b as u256);
+assert!(k_after >= k_before, E_K_VIOLATED);
+```
+
+#### H-2 — Reentrancy lock not fail-safe (panic = permanent lock risk)
+
+**Auditor's claim:** "If any abort happens after locking → pool remains permanently locked." Affected: `swap`, `flash_borrow`, `claim_lp_fees`, `claim_hook_fees`. Rated HIGH.
+
+**Recommendation (per auditor):** "Minimize lock window, or structured pattern:"
+```move
+pool.locked = true;
+let result = (|| { /* logic */ })();
+pool.locked = false;
+result
+```
+
+### MEDIUM findings
+
+#### M-1 — Dust swap fee extraction can exceed intended fee model
+
+```move
+let extra_fee = if (extra_fee_raw == 0 && amount_in > 0) { 1 } else { extra_fee_raw };
+```
+
+For very small trades: `total_fee = 0`, `extra_fee = 1`, so user pays 1 unit fee even if trade is tiny. Breaks fee predictability, allows griefing, micro-swap exploitation, distorted price behavior.
+
+**Recommendation:** Cap `extra_fee = min(extra_fee, total_fee)` or enforce a minimum trade size.
+
+#### M-2 — LP fee accumulator precision loss over time
+
+```move
+let add = (lp_portion as u128) * SCALE / (pool.lp_supply as u128);
+```
+
+Integer division truncation — lost dust permanently. Long-term LPs are underpaid and the protocol accumulates invisible value. Not critical but noticeable at scale.
+
+**Fix (optional):** track remainder bucket or accumulate dust.
+
+#### M-3 — No slippage protection in `flash_borrow`
+
+Flash borrow only checks `amount < reserve_in` — no price / state validation. Currently safe due to `locked = true`, but if future hooks or callbacks added → unsafe. Document assumption or enforce stricter invariant checks.
+
+#### M-4 — TWAP can be manipulated within single transaction window
+
+TWAP only updates on interaction. Attacker can manipulate reserves, trigger update, revert position later. Oracle consumers vulnerable. Fix: enforce minimum time window externally or recommend off-chain TWAP usage.
+
+### LOW findings
+
+#### L-1 — Hook fee claim drains without rate limiting
+
+```move
+pool.hook_1_fee_a = 0;
+```
+
+Entire bucket claimable instantly — MEV race on hook NFT ownership transfers.
+
+#### L-2 — No explicit NFT burn event on LP position removal
+
+`LiquidityRemoved` is emitted but no dedicated NFT burn event — indexers must infer.
+
+#### L-3 — Hardcoded constants reduce flexibility
+
+`SWAP_FEE_BPS = 1`, `FLASH_FEE_BPS = 1` — not upgradeable without contract upgrade.
+
+### Design-level observations (verbatim)
+
+**Strong architecture:** Clean separation of pool / factory / router. Object model well used. NFT-based LP = modern and flexible.
+
+**Biggest latent risk:** "Your system is safe today because of assumptions, not enforcement." Main assumptions: no callbacks, no composability hooks, no cross-module interactions. History shows these assumptions break over time.
+
+### Final verdict (verbatim)
+
+**Security posture: B+ (production viable, but not battle-hardened yet)**
+
+Critical to fix before serious TVL:
+1. Add **k-invariant check in flash_repay**
+2. Harden **lock mechanism**
+3. Fix **dust fee asymmetry**
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
 
 - DeepSeek — pending
 - Qwen — pending
-- ChatGPT (GPT-5) — pending
 - Others TBD
 
 Consolidated triage, false-positive rebuttals, and fix commits will be batched at the end of the cycle — not per-auditor.
