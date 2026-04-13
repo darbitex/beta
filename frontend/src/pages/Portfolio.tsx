@@ -4,7 +4,7 @@ import { fromRaw, viewFn } from "../chain/client";
 import { loadPools, type Pool } from "../chain/pools";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
-import { RemoveLiquidityModal } from "../components/RemoveLiquidityModal";
+import { RemoveLiquidityModal, type RemoveTarget } from "../components/RemoveLiquidityModal";
 import { useAddress } from "../wallet/useConnect";
 
 type Position = {
@@ -22,7 +22,7 @@ export function PortfolioPage() {
   const { connected, signAndSubmitTransaction } = useWallet();
   const [loading, setLoading] = useState(true);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [removeTarget, setRemoveTarget] = useState<{ addr: string; label: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -214,7 +214,7 @@ export function PortfolioPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setRemoveTarget({ addr: pos.objectAddr, label: `${sA}/${sB}` })}
+                onClick={() => setRemoveTarget({ positionAddr: pos.objectAddr, pairLabel: `${sA}/${sB}`, pool: pos.pool, shares: pos.shares })}
               >
                 Remove
               </button>
@@ -224,12 +224,12 @@ export function PortfolioPage() {
       })}
 
       <RemoveLiquidityModal
-        positionAddr={removeTarget?.addr ?? null}
-        pairLabel={removeTarget?.label ?? ""}
+        target={removeTarget}
         onClose={() => setRemoveTarget(null)}
         onDone={() => {
+          const addr = removeTarget?.positionAddr;
           setRemoveTarget(null);
-          setPositions((prev) => prev.filter((p) => p.objectAddr !== removeTarget?.addr));
+          setPositions((prev) => prev.filter((p) => p.objectAddr !== addr));
         }}
       />
     </div>

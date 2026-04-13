@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { PACKAGE } from "../config";
 import { ConnectButton } from "./ConnectButton";
+import { SlippageButton } from "./SlippageButton";
 
 export function Layout() {
   const explorer = `https://explorer.aptoslabs.com/account/${PACKAGE}/modules/code/pool_factory?network=mainnet`;
@@ -19,7 +20,10 @@ export function Layout() {
             </svg>
           </a>
         </div>
-        <ConnectButton />
+        <div className="header-actions">
+          <SlippageButton />
+          <ConnectButton />
+        </div>
       </div>
 
       <nav className="nav">

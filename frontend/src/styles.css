@@ -213,6 +213,78 @@ a:hover { text-decoration: underline; }
 }
 .links-row a:hover { background: #1a1a1a; text-decoration: none; }
 
+/* Balance display */
+.swap-label-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bal-link {
+  background: none; border: none; padding: 0;
+  color: #888; font-family: inherit; font-size: 11px;
+  cursor: pointer; text-align: right;
+}
+.bal-link:hover:not(:disabled) { color: #ff8800; text-decoration: underline; }
+.bal-link:disabled { color: #444; cursor: default; }
+.bal-static { color: #666; font-size: 11px; }
+.bal-link-modal {
+  display: block; margin: -8px 0 12px; font-size: 11px;
+  width: 100%; text-align: left;
+}
+
+/* Slippage settings */
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.slippage-wrap { position: relative; }
+.slippage-btn {
+  background: #1a1a1a; border: 1px solid #333; color: #ff8800;
+  padding: 8px 12px; border-radius: 8px;
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.slippage-btn:hover { background: #222; }
+.slippage-btn svg { width: 14px; height: 14px; }
+.slippage-val { font-size: 12px; }
+.slippage-panel {
+  position: absolute; top: 44px; right: 0;
+  background: #111; border: 1px solid #333; border-radius: 12px;
+  padding: 14px; min-width: 240px; z-index: 40;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.slippage-panel-title {
+  font-size: 11px; color: #666; text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 10px;
+}
+.slippage-presets { display: flex; gap: 6px; margin-bottom: 10px; }
+.slippage-preset {
+  flex: 1; padding: 8px; background: #0a0a0a; border: 1px solid #333;
+  color: #aaa; border-radius: 8px; font-family: inherit; font-size: 12px;
+  cursor: pointer;
+}
+.slippage-preset:hover { background: #1a1a1a; color: #ff8800; }
+.slippage-preset.active { background: #ff8800; color: #000; border-color: #ff8800; }
+.slippage-custom { display: flex; gap: 6px; margin-bottom: 8px; }
+.slippage-custom input {
+  flex: 1; background: #0a0a0a; border: 1px solid #333;
+  color: #fff; padding: 8px; border-radius: 8px;
+  font-family: inherit; font-size: 12px; outline: none; min-width: 0;
+}
+.slippage-apply {
+  background: #1a1a1a; border: 1px solid #333; color: #ff8800;
+  padding: 8px 14px; border-radius: 8px;
+  font-family: inherit; font-size: 12px; cursor: pointer;
+}
+.slippage-apply:hover { background: #222; }
+.slippage-hint { font-size: 10px; color: #555; line-height: 1.4; }
+
+/* Remove liquidity preview */
+.remove-preview {
+  background: #0a0a0a; border-radius: 8px; padding: 12px; margin: 8px 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;
+}
+.remove-preview > div { display: flex; flex-direction: column; gap: 2px; }
+.remove-preview .label { color: #666; font-size: 10px; }
+.remove-preview .value { color: #aaa; font-size: 13px; }
+.remove-preview .value.accent { color: #ff8800; }
+
 /* Responsive */
 @media (min-width: 640px) {
   .container { padding: 24px; }

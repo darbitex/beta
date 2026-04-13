@@ -1,7 +1,9 @@
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useState } from "react";
+import { useFaBalance } from "../chain/balance";
 import { toRaw, fromRaw } from "../chain/client";
 import type { Pool } from "../chain/pools";
+import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
@@ -17,14 +19,19 @@ export function AddLiquidityModal({
 }) {
   const toast = useToast();
   const { signAndSubmitTransaction, connected } = useWallet();
+  const [slippage] = useSlippage();
   const [amtA, setAmtA] = useState("");
   const [amtB, setAmtB] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const balA = useFaBalance(pool?.token_a.meta ?? null, pool?.token_a.decimals ?? 0);
+  const balB = useFaBalance(pool?.token_b.meta ?? null, pool?.token_b.decimals ?? 0);
 
   if (!pool) return null;
 
   const resA = Number(pool.reserve_a);
   const resB = Number(pool.reserve_b);
+  const supply = Number(pool.lp_supply);
   const hasReserves = resA > 0 && resB > 0;
 
   function onChangeA(val: string) {
@@ -53,6 +60,16 @@ export function AddLiquidityModal({
     }
   }
 
+  function setMaxA() {
+    if (balA.raw === 0n) return;
+    onChangeA(String(balA.formatted));
+  }
+
+  function setMaxB() {
+    if (balB.raw === 0n) return;
+    onChangeB(String(balB.formatted));
+  }
+
   async function submit() {
     if (!connected || !pool) {
       toast("Connect wallet first", true);
@@ -66,16 +83,31 @@ export function AddLiquidityModal({
     }
     setBusy(true);
     try {
+      const rawA = toRaw(a, pool.token_a.decimals);
+      const rawB = toRaw(b, pool.token_b.decimals);
+      let expectedLp: bigint;
+      if (supply === 0 || !hasReserves) {
+        const prod = Number(rawA) * Number(rawB);
+        expectedLp = BigInt(Math.floor(Math.sqrt(prod)));
+      } else {
+        const lpFromA = (rawA * BigInt(supply)) / BigInt(resA);
+        const lpFromB = (rawB * BigInt(supply)) / BigInt(resB);
+        expectedLp = lpFromA < lpFromB ? lpFromA : lpFromB;
+      }
+      const slipBps = BigInt(Math.floor((1 - slippage) * 10000));
+      const minLp = (expectedLp * slipBps) / 10000n;
       const tx = buildEntryTx("pool", "add_liquidity_entry", [
         pool.addr,
-        toRaw(a, pool.token_a.decimals).toString(),
-        toRaw(b, pool.token_b.decimals).toString(),
-        "0",
+        rawA.toString(),
+        rawB.toString(),
+        minLp.toString(),
       ]);
       const resp = await signAndSubmitTransaction(tx);
       toast(`TX: ${String(resp.hash).slice(0, 12)}...`);
       setAmtA("");
       setAmtB("");
+      balA.refresh();
+      balB.refresh();
       onDone();
     } catch (e: unknown) {
       toast((e as Error)?.message ?? "TX failed", true);
@@ -90,21 +122,43 @@ export function AddLiquidityModal({
 
   return (
     <Modal open={!!pool} onClose={onClose} title={`Add ${pool.token_a.symbol}/${pool.token_b.symbol}`}>
+      <label>Amount {pool.token_a.symbol}</label>
       <input
         type="number"
         placeholder={`Amount ${pool.token_a.symbol}`}
         value={amtA}
         onChange={(e) => onChangeA(e.target.value)}
       />
+      {connected && (
+        <button
+          type="button"
+          className="bal-link bal-link-modal"
+          onClick={setMaxA}
+          disabled={balA.raw === 0n}
+        >
+          Balance: {balA.loading ? "…" : balA.formatted.toFixed(6)} {pool.token_a.symbol}
+        </button>
+      )}
+      <label>Amount {pool.token_b.symbol}</label>
       <input
         type="number"
         placeholder={`Amount ${pool.token_b.symbol}`}
         value={amtB}
         onChange={(e) => onChangeB(e.target.value)}
       />
+      {connected && (
+        <button
+          type="button"
+          className="bal-link bal-link-modal"
+          onClick={setMaxB}
+          disabled={balB.raw === 0n}
+        >
+          Balance: {balB.loading ? "…" : balB.formatted.toFixed(6)} {pool.token_b.symbol}
+        </button>
+      )}
       {priceDisplay && <div className="modal-note">{priceDisplay}</div>}
       <div className="modal-note">
-        Provide a small buffer — unused tokens stay in your wallet. Mints a new LpPosition NFT.
+        Provide a small buffer — unused tokens stay in your wallet. Mints a new LpPosition NFT. Min LP applies slippage {(slippage * 100).toFixed(slippage < 0.01 ? 2 : 1)}%.
       </div>
       <button type="button" className="btn btn-primary" onClick={submit} disabled={busy}>
         {busy ? "Submitting..." : "Add Liquidity"}

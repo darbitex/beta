@@ -1,14 +1,17 @@
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useEffect, useMemo, useState } from "react";
+import { useFaBalance } from "../chain/balance";
 import { fromRaw, metaEq, toRaw, viewFn } from "../chain/client";
 import { findPool, loadPools, type Pool } from "../chain/pools";
+import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
-import { SLIPPAGE, TOKENS } from "../config";
+import { TOKENS } from "../config";
 
 export function SwapPage() {
   const toast = useToast();
   const { connected, signAndSubmitTransaction } = useWallet();
+  const [slippage] = useSlippage();
   const [pools, setPools] = useState<Pool[]>([]);
   const [inSym, setInSym] = useState("APT");
   const [outSym, setOutSym] = useState("USDC");
@@ -23,6 +26,8 @@ export function SwapPage() {
   const tIn = TOKENS[inSym]!;
   const tOut = TOKENS[outSym]!;
   const amountNum = Number.parseFloat(amount);
+  const balIn = useFaBalance(tIn.meta, tIn.decimals);
+  const balOut = useFaBalance(tOut.meta, tOut.decimals);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +79,7 @@ export function SwapPage() {
     setBusy(true);
     try {
       const rawIn = toRaw(amountNum, tIn.decimals);
-      const minOut = toRaw(quote.amountOut * (1 - SLIPPAGE), tOut.decimals);
+      const minOut = toRaw(quote.amountOut * (1 - slippage), tOut.decimals);
       const deadline = Math.floor(Date.now() / 1000) + 120;
       const tx = buildEntryTx("router", "swap_with_deadline", [
         quote.pool.addr,
@@ -87,12 +92,19 @@ export function SwapPage() {
       toast(`TX: ${String(resp.hash).slice(0, 12)}...`);
       setTimeout(() => {
         loadPools().then(setPools).catch(() => {});
+        balIn.refresh();
+        balOut.refresh();
       }, 3000);
     } catch (e: unknown) {
       toast((e as Error)?.message ?? "TX failed", true);
     } finally {
       setBusy(false);
     }
+  }
+
+  function setMax() {
+    if (balIn.raw === 0n) return;
+    setAmount(String(balIn.formatted));
   }
 
   function flip() {
@@ -103,7 +115,20 @@ export function SwapPage() {
   return (
     <div className="container">
       <div className="card">
-        <div className="swap-label">You pay</div>
+        <div className="swap-label-row">
+          <span className="swap-label">You pay</span>
+          {connected && (
+            <button
+              type="button"
+              className="bal-link"
+              onClick={setMax}
+              disabled={balIn.raw === 0n}
+              title="Click for MAX"
+            >
+              Balance: {balIn.loading ? "…" : balIn.formatted.toFixed(6)} {inSym}
+            </button>
+          )}
+        </div>
         <div className="swap-row">
           <input
             className="swap-input"
@@ -121,7 +146,14 @@ export function SwapPage() {
         <div className="swap-arrow">
           <button type="button" onClick={flip} aria-label="Flip">&#8597;</button>
         </div>
-        <div className="swap-label">You receive</div>
+        <div className="swap-label-row">
+          <span className="swap-label">You receive</span>
+          {connected && (
+            <span className="bal-static">
+              Balance: {balOut.loading ? "…" : balOut.formatted.toFixed(6)} {outSym}
+            </span>
+          )}
+        </div>
         <div className="swap-row">
           <input
             className="swap-input"
@@ -153,13 +185,17 @@ export function SwapPage() {
               <span className="val">0.01% (1 BPS)</span>
             </div>
             <div>
+              <span>Slippage</span>
+              <span className="val">{(slippage * 100).toFixed(slippage < 0.01 ? 2 : 1)}%</span>
+            </div>
+            <div>
               <span>Pool</span>
               <span className="val">{quote.pool.addr.slice(0, 10)}...</span>
             </div>
             <div>
               <span>Min received</span>
               <span className="val">
-                {(quote.amountOut * (1 - SLIPPAGE)).toFixed(6)} {outSym}
+                {(quote.amountOut * (1 - slippage)).toFixed(6)} {outSym}
               </span>
             </div>
           </div>
