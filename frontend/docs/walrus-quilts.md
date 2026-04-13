@@ -1,92 +1,190 @@
-# Walrus Quilt Registry — Darbitex Beta Frontend
+# Walrus Quilt Registry — Darbitex Frontend
 
-Source of truth for which Walrus blobs (quilts) back the live Darbitex Beta
-site. Cross-check this file against on-chain state before any deploy, extend,
+Source of truth for which Walrus blobs (quilts) back the live Darbitex site.
+Cross-check this file against on-chain state before any deploy, extend, share,
 or burn operation.
 
 ## Live site
 
 - **Site Object ID:** `0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
-- **SuiNS binding:** bound (see `darbitex-beta` / live domain)
+- **SuiNS binding:** bound to the SuiNS NFT currently in the operational wallet
 - **Walrus network:** mainnet
-- **Wallet:** the wallet registered in `~/.sui/sui_config/client.yaml`
+- **Operational wallet:** the wallet registered in `~/.sui/sui_config/client.yaml`
+- **Blob ownership model:** **shared** (policy — see below)
 
-## Active quilts
+## Blob ownership policy
+
+**ALL quilts/blobs backing the live site MUST be shared, not owned.**
+
+Rationale:
+- Shared blobs are fundable by anyone via `walrus fund-shared-blob` — the
+  frontend becomes self-sustaining without admin top-ups
+- Shared blob content is still immutable (Walrus blobs cannot be mutated at all,
+  owned or shared — sharing only unlocks public funding, not public write)
+- Shared blobs survive loss of the operational wallet: even if the wallet that
+  originally published them is gone, the blobs live on, funded by anyone
+- Owner of the Site object (= operational wallet) is still the only party that
+  can add/remove/replace resource mappings, so publishing control stays private
+
+Anything that creates new owned blobs (e.g. a fresh `site-builder update`) MUST
+be followed by `walrus share` on each newly-created blob before the deploy is
+considered complete.
+
+## Active shared quilts
 
 Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 days**).
 
-| # | Blob Object ID | Blob ID | Size | Exp. epoch | Exp. date | Resources |
+| # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0x824c7b6f6216699bba57dc59ebc48b893a9156b409aa269025e2d866e2c8a436` | `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U` | 1.70 MiB | 81 | 2028-04-18 | `/index.html`, `/assets/index-BktrgoBZ.js` |
-| 2 | `0x76070409f3477f9d2e5f9b7d5a3adaa2acfaafba0363c770ffa2c057988d6b78` | `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI` | 435 KiB | 81 | 2028-04-18 | `/assets/index-Dk_OrSqq.css`, `/favicon.svg`, `/manifest.json` |
+| 1 | `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` | `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U` | 1.70 MiB | 81 | 2028-04-18 | `/index.html`, `/assets/index-BktrgoBZ.js` |
+| 2 | `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` | `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI` | 435 KiB | 81 | 2028-04-18 | `/assets/index-Dk_OrSqq.css`, `/favicon.svg`, `/manifest.json` |
 
-Two quilts exist because CSS/favicon/manifest bytes stayed identical across the
-last deploy while JS+HTML changed. Vite content-hashed filenames naturally
-re-merge into a single quilt only when *every* file changes.
+**Previous owned object IDs (now superseded by shared objects above):**
+- `0x824c7b6f6216699bba57dc59ebc48b893a9156b409aa269025e2d866e2c8a436` → shared as #1
+- `0x76070409f3477f9d2e5f9b7d5a3adaa2acfaafba0363c770ffa2c057988d6b78` → shared as #2
+
+Site references blobs by content hash (blob ID), so the shared migration was
+zero-downtime and no site-object update was required.
+
+## How anyone can fund-extend these quilts
+
+Community members / users can extend the lease on any shared blob above using:
+
+```bash
+walrus --context mainnet fund-shared-blob \
+    --shared-blob-obj-id <SHARED_OBJECT_ID_FROM_TABLE> \
+    --epochs-extended <N>
+```
+
+The operational wallet does not need to sign. Cost: ~0.0015 WAL per epoch per
+blob (at ≤16 MiB tier). Max extension is capped by Walrus `max_epochs_ahead`
+(currently 53 epochs / ~2 years from current epoch).
 
 ## How to verify on-chain state
 
 ```bash
-# 1. Site → blob references
+# 1. Site → resource → blob ID mapping
 site-builder sitemap 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718
 
-# 2. Wallet blob list (should contain ONLY the blobs above)
+# 2. Owned blobs (should be EMPTY — any entry here is a new deploy that
+#    still needs to be shared, or an orphan)
 walrus --context mainnet list-blobs
 
-# 3. Walrus current epoch (so you can convert exp epoch → date)
+# 3. Walrus current epoch (for epoch → date conversion)
 walrus --context mainnet info | grep -iE "epoch|duration"
+
+# 4. Confirm a shared blob's on-chain state
+sui client object <SHARED_OBJECT_ID> | grep -iE "owner|shared|type"
 ```
 
-**Invariant:** `walrus list-blobs` output should match this file exactly — same
-object IDs, same count. Any extra blob is an orphan (safe to burn after confirming
-it is not in any other live site you care about). Any missing blob is a broken
-live site (restore via `site-builder update --epochs 53`, then extend new blobs).
+**Invariant:** `walrus list-blobs` should be EMPTY after any deploy. Each
+shared object in the table above must show `owner: Shared` and type
+`...::shared_blob::SharedBlob`.
 
-## How to update this file
+## Deploy checklist (MANDATORY ORDER)
 
-Update this table whenever any of the following happens:
+Every production deploy MUST follow every step:
 
-1. **Frontend deploy** — a `site-builder update` created new quilts and/or deleted old ones.
-2. **Extend** — a `walrus extend` bumped an `Exp. epoch`.
-3. **Burn** — a blob was burned.
+1. `npm run build`
+2. `site-builder update --epochs 53 dist 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
+   - **Always** use `update`, never `publish` (SuiNS is bound to the object ID)
+   - **Always** pass `--epochs 53` to buy max lease
+3. `site-builder sitemap <site_id>` — note which blob object IDs are new
+4. `walrus --context mainnet list-blobs` — find new owned blob object IDs
+5. For each NEW owned blob: `walrus --context mainnet share --blob-obj-id <id>`
+   - Record the resulting shared object ID
+6. If any new blob got a lease < 53 epochs (e.g. site-builder SIGILL workaround):
+   `walrus --context mainnet extend --blob-obj-id <id> --epochs-extended <n>`
+   **BEFORE** sharing (extend must be done by the owner)
+7. Re-run `walrus list-blobs` — MUST be empty
+8. Update the table in this file with new shared object IDs + exp epochs
+9. Commit and push — the table on `main` must match on-chain reality
 
-After the op, run step 1 (sitemap) and step 2 (list-blobs), then edit this table
-so it matches. Commit alongside the change that triggered it.
+## Destructive-op safety rules
+
+- **NEVER run `site-builder destroy` on any site that references blobs used by
+  the live Darbitex site.** `destroy` burns every referenced blob, even
+  cross-site shared ones. See `feedback_walrus_destroy_shared_blob.md` in
+  auto-memory for the incident.
+- **NEVER transfer the Site object** `0x050df98f...` unless the destination
+  wallet is explicitly the new admin.
+- **Burn orphan blobs individually** via
+  `walrus burn-blobs --object-ids <...>` only for blobs owned by the wallet
+  (listed by `walrus list-blobs`) AND verified absent from the Active shared
+  quilts table.
+- Shared blobs **cannot be burned** by this wallet anymore — they will live
+  until their lease expires naturally.
+
+## Recovery procedure (wallet loss / compromise)
+
+**Key invariant:** continuity of the brand URL depends on the **SuiNS
+registration NFT**, NOT on the operational wallet. As long as the SuiNS NFT is
+safe, the public URL can always be re-pointed to a new Site object.
+
+### Threat model
+
+| Loss scenario | Recoverable? | Path |
+|---|---|---|
+| Operational wallet compromised but SuiNS NFT in cold wallet | **Yes** | Publish new Site from new wallet → re-point SuiNS → done |
+| Operational wallet lost AND SuiNS NFT in same wallet | **No** for the URL; users can still reach the old Site object directly until blobs expire | — |
+| Shared blob lease runs out | Partial — blobs expire; site goes blank until a re-deploy to fresh blobs and SuiNS re-point | Community can keep funding before expiry |
+
+### Why shared blobs matter for recovery
+
+Because blobs are shared, they **do not expire when the operational wallet is
+lost**. The community can keep extending them via `fund-shared-blob`. This
+gives you a long grace window to execute recovery.
+
+### Recovery runbook
+
+Assumes: you still control the SuiNS registration NFT in a separate cold wallet.
+
+1. **Provision new operational wallet**
+   - Generate new Sui keypair, fund with SUI (gas) + WAL (storage)
+2. **Clone & build frontend from `main`**
+   - `git clone <repo> && cd frontend && npm ci && npm run build`
+3. **Publish fresh Site object**
+   - `site-builder publish --epochs 53 dist --site-name "Darbitex"`
+   - Record the new Site Object ID
+4. **Share all new blobs** (per policy)
+   - `walrus list-blobs` → for each entry: `walrus share --blob-obj-id <id>`
+5. **Re-point SuiNS** from the cold wallet
+   - Use SuiNS dApp or CLI: set target to new Site Object ID
+6. **Verify** via `https://<subdomain>.wal.app`
+7. **Update this file** on `main`:
+   - New Site Object ID
+   - New shared blob object IDs and expirations
+   - New "operational wallet" description
+
+### SuiNS NFT protection (highest priority)
+
+The SuiNS registration NFT is the single-most-valuable object in the recovery
+chain. Its current location and required protection:
+
+- **Current state (2026-04-13):** SuiNS NFT resides in the operational wallet
+  — this is a known single-point-of-failure
+- **Target state:** SuiNS NFT transferred to a cold wallet (hardware / multisig
+  / air-gapped), operational wallet retains only:
+  - Site object ownership
+  - WAL balance for future shares / fundings
+  - SUI gas
+- **Cold wallet role:** holds the SuiNS NFT, signs only SuiNS re-point txs and
+  SuiNS renewal payments
+- **Renewal:** SuiNS registrations are themselves subject to expiry — set a
+  calendar reminder or automate renewal from cold wallet well before the NFT's
+  expiry date
+
+Until the SuiNS NFT is moved, treat the operational wallet as a high-severity
+credential and rotate it at the first sign of compromise.
 
 ## Epoch reference
 
 - Walrus mainnet epoch duration = **14 days**
-- Max future epochs for a new blob = **53** (≈ 2 years lease ceiling)
+- Max future epochs per blob = **53** (≈ 2 years lease ceiling)
 - Storage price tier ≤ 16 MiB unencoded = **0.0015 WAL / epoch**
 
 Convert epoch → date:
+
 ```
 target_date = today + (target_epoch - current_epoch) * 14 days
 ```
-
-## Deploy checklist
-
-Every production deploy MUST follow these steps in order:
-
-1. `npm run build`
-2. `site-builder update --epochs 53 dist 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
-   - **Always** pass `--epochs 53` to get max lease on new blobs
-   - **Always** use `update`, never `publish` (SuiNS binding is on the object ID)
-3. `site-builder sitemap <site_id>` — copy new blob object IDs into this file
-4. `walrus --context mainnet list-blobs` — verify no unexpected extras
-5. For any blob that `update` created with a shorter lease than 53 epochs (e.g.,
-   if site-builder's --epochs 53 path crashes with SIGILL on this host), run
-   `walrus --context mainnet extend --blob-obj-id <id> --epochs-extended <n>`
-   manually
-6. Commit the updated `walrus-quilts.md`
-
-## Destructive-op safety rules
-
-- **NEVER run `site-builder destroy` on any site that shares blobs with the live
-  Beta site.** `destroy` burns every referenced blob, even cross-site shared ones.
-  See `feedback_walrus_destroy_shared_blob.md` in auto-memory for the incident
-  that triggered this rule.
-- **Burn orphan blobs individually** via `walrus burn-blobs --object-ids <...>`
-  after cross-checking against this file.
-- **Before burning**, confirm the blob object ID is NOT in the active quilts
-  table above.
