@@ -2,12 +2,12 @@ import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useEffect, useMemo, useState } from "react";
 import { aggregateQuotes, type AggregatorResult, type Quote, type Venue } from "../chain/aggregator";
 import { useFaBalance } from "../chain/balance";
-import { fromRaw, metaEq, toRaw } from "../chain/client";
+import { fromRaw, metaEq, normMeta, toRaw } from "../chain/client";
 import { findPool, loadPools, type Pool } from "../chain/pools";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
-import { AGGREGATOR_PACKAGE, QUOTE_DEBOUNCE_MS, TOKENS } from "../config";
+import { AGGREGATOR_PACKAGE, QUOTE_DEBOUNCE_MS, TOKENS, type TokenConfig } from "../config";
 
 type Mode = "swap" | "aggregator";
 
@@ -15,7 +15,32 @@ const VENUE_LABEL: Record<Venue, string> = {
   darbitex: "Darbitex",
   hyperion: "Hyperion",
   liquidswap_stable: "LiquidSwap",
+  cellana: "Cellana",
 };
+
+// Build the token universe from (a) hardcoded TOKENS in config and (b) any
+// token that appears in a live Darbitex pool. Deduped by metadata address.
+// If two tokens share a symbol (e.g. nUSDC and lzUSDC both symbol "USDC"),
+// append a short meta suffix to the label to disambiguate.
+function buildAvailableTokens(pools: Pool[]): TokenConfig[] {
+  const map = new Map<string, TokenConfig>();
+  for (const t of Object.values(TOKENS)) map.set(normMeta(t.meta), t);
+  for (const p of pools) {
+    const a = normMeta(p.token_a.meta);
+    const b = normMeta(p.token_b.meta);
+    if (!map.has(a)) map.set(a, p.token_a);
+    if (!map.has(b)) map.set(b, p.token_b);
+  }
+  return Array.from(map.values()).sort((x, y) =>
+    x.symbol.localeCompare(y.symbol),
+  );
+}
+
+function tokenLabel(t: TokenConfig, all: TokenConfig[]): string {
+  const sameSymbol = all.filter((o) => o.symbol === t.symbol);
+  if (sameSymbol.length <= 1) return t.symbol;
+  return `${t.symbol} · ${t.meta.slice(2, 6)}`;
+}
 
 export function SwapPage() {
   const toast = useToast();
@@ -23,8 +48,8 @@ export function SwapPage() {
   const [slippage] = useSlippage();
   const [mode, setMode] = useState<Mode>("swap");
   const [pools, setPools] = useState<Pool[]>([]);
-  const [inSym, setInSym] = useState("APT");
-  const [outSym, setOutSym] = useState("USDC");
+  const [inMeta, setInMeta] = useState<string>(TOKENS.APT.meta);
+  const [outMeta, setOutMeta] = useState<string>(TOKENS.USDC.meta);
   const [amount, setAmount] = useState("");
   const [darbitexPool, setDarbitexPool] = useState<Pool | null>(null);
   const [darbitexAToB, setDarbitexAToB] = useState(true);
@@ -37,15 +62,27 @@ export function SwapPage() {
     loadPools().then(setPools).catch((e) => toast(`Load pools: ${String(e?.message ?? e)}`, true));
   }, [toast]);
 
-  const tIn = TOKENS[inSym]!;
-  const tOut = TOKENS[outSym]!;
+  // Token universe = hardcoded TOKENS + unique tokens from loaded pools.
+  // Grows as pools are loaded so freshly-created pools (e.g. lzUSDC) show
+  // up without a frontend redeploy.
+  const availableTokens = useMemo(() => buildAvailableTokens(pools), [pools]);
+
+  const tIn: TokenConfig = useMemo(
+    () => availableTokens.find((t) => metaEq(t.meta, inMeta)) ?? TOKENS.APT!,
+    [availableTokens, inMeta],
+  );
+  const tOut: TokenConfig = useMemo(
+    () => availableTokens.find((t) => metaEq(t.meta, outMeta)) ?? TOKENS.USDC!,
+    [availableTokens, outMeta],
+  );
+
   const amountNum = Number.parseFloat(amount);
   const balIn = useFaBalance(tIn.meta, tIn.decimals);
   const balOut = useFaBalance(tOut.meta, tOut.decimals);
 
   // Track darbitex pool context separately so both modes can use it.
   useEffect(() => {
-    if (!pools.length || inSym === outSym) {
+    if (!pools.length || metaEq(inMeta, outMeta)) {
       setDarbitexPool(null);
       return;
     }
@@ -56,13 +93,13 @@ export function SwapPage() {
     }
     setDarbitexPool(pool);
     setDarbitexAToB(metaEq(pool.meta_a, tIn.meta));
-  }, [pools, inSym, outSym, tIn, tOut]);
+  }, [pools, inMeta, outMeta, tIn, tOut]);
 
   // Fetch quotes whenever inputs change. Debounced so rapid typing doesn't
   // burst the RPC pool — only the last stable input within the debounce window
   // actually fires view calls.
   useEffect(() => {
-    if (!amountNum || amountNum <= 0 || inSym === outSym) {
+    if (!amountNum || amountNum <= 0 || metaEq(inMeta, outMeta)) {
       setAgg(null);
       setSelectedVenue(null);
       setAggLoading(false);
@@ -102,13 +139,14 @@ export function SwapPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [amountNum, inSym, outSym, tIn, tOut, darbitexPool, darbitexAToB, mode]);
+  }, [amountNum, inMeta, outMeta, tIn, tOut, darbitexPool, darbitexAToB, mode]);
 
   const activeQuote: Quote | null = useMemo(() => {
     if (!agg || !selectedVenue) return null;
     if (selectedVenue === "darbitex") return agg.darbitex;
     if (selectedVenue === "hyperion") return agg.hyperion;
-    return agg.liquidswapStable;
+    if (selectedVenue === "liquidswap_stable") return agg.liquidswapStable;
+    return agg.cellana;
   }, [agg, selectedVenue]);
 
   const amountOutFormatted = activeQuote
@@ -118,13 +156,13 @@ export function SwapPage() {
   const disabled = !connected || !activeQuote || busy;
   const btnLabel = useMemo(() => {
     if (!amountNum || amountNum <= 0) return "Enter amount";
-    if (inSym === outSym) return "Select different tokens";
+    if (metaEq(inMeta, outMeta)) return "Select different tokens";
     if (aggLoading) return "Quoting...";
     if (!activeQuote) return "No route";
     if (!connected) return "Connect wallet";
     if (busy) return "Submitting...";
     return mode === "swap" ? "Swap" : `Swap via ${VENUE_LABEL[activeQuote.venue]}`;
-  }, [amountNum, inSym, outSym, activeQuote, connected, busy, aggLoading, mode]);
+  }, [amountNum, inMeta, outMeta, activeQuote, connected, busy, aggLoading, mode]);
 
   async function doSwap() {
     if (!activeQuote) return;
@@ -179,13 +217,28 @@ export function SwapPage() {
           [],
           AGGREGATOR_PACKAGE,
         );
-      } else {
-        // liquidswap_stable
+      } else if (activeQuote.venue === "liquidswap_stable") {
         tx = buildEntryTx(
           "aggregator",
           "swap_liquidswap_stable",
           [tIn.meta, rawIn.toString(), minOut.toString(), deadline.toString()],
           activeQuote.liquidswapTypes ?? [],
+          AGGREGATOR_PACKAGE,
+        );
+      } else {
+        // cellana
+        tx = buildEntryTx(
+          "aggregator",
+          "swap_cellana",
+          [
+            tIn.meta,
+            tOut.meta,
+            activeQuote.cellanaIsStable ?? false,
+            rawIn.toString(),
+            minOut.toString(),
+            deadline.toString(),
+          ],
+          [],
           AGGREGATOR_PACKAGE,
         );
       }
@@ -210,8 +263,9 @@ export function SwapPage() {
   }
 
   function flip() {
-    setInSym(outSym);
-    setOutSym(inSym);
+    const prev = inMeta;
+    setInMeta(outMeta);
+    setOutMeta(prev);
   }
 
   const rate = amountNum > 0 && activeQuote
@@ -248,7 +302,7 @@ export function SwapPage() {
               disabled={balIn.raw === 0n}
               title="Click for MAX"
             >
-              Balance: {balIn.loading ? "…" : balIn.formatted.toFixed(6)} {inSym}
+              Balance: {balIn.loading ? "…" : balIn.formatted.toFixed(6)} {tIn.symbol}
             </button>
           )}
         </div>
@@ -260,9 +314,15 @@ export function SwapPage() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          <select className="token-select" value={inSym} onChange={(e) => setInSym(e.target.value)}>
-            {Object.keys(TOKENS).map((s) => (
-              <option key={s} value={s}>{s}</option>
+          <select
+            className="token-select"
+            value={inMeta}
+            onChange={(e) => setInMeta(e.target.value)}
+          >
+            {availableTokens.map((t) => (
+              <option key={t.meta} value={t.meta}>
+                {tokenLabel(t, availableTokens)}
+              </option>
             ))}
           </select>
         </div>
@@ -273,7 +333,7 @@ export function SwapPage() {
           <span className="swap-label">You receive</span>
           {connected && (
             <span className="bal-static">
-              Balance: {balOut.loading ? "…" : balOut.formatted.toFixed(6)} {outSym}
+              Balance: {balOut.loading ? "…" : balOut.formatted.toFixed(6)} {tOut.symbol}
             </span>
           )}
         </div>
@@ -287,11 +347,13 @@ export function SwapPage() {
           />
           <select
             className="token-select"
-            value={outSym}
-            onChange={(e) => setOutSym(e.target.value)}
+            value={outMeta}
+            onChange={(e) => setOutMeta(e.target.value)}
           >
-            {Object.keys(TOKENS).map((s) => (
-              <option key={s} value={s}>{s}</option>
+            {availableTokens.map((t) => (
+              <option key={t.meta} value={t.meta}>
+                {tokenLabel(t, availableTokens)}
+              </option>
             ))}
           </select>
         </div>
@@ -323,11 +385,19 @@ export function SwapPage() {
               selected={selectedVenue === "liquidswap_stable"}
               onSelect={() => agg.liquidswapStable && setSelectedVenue("liquidswap_stable")}
             />
+            <VenueRow
+              label="Cellana"
+              quote={agg.cellana}
+              decimals={tOut.decimals}
+              isBest={agg.best?.venue === "cellana"}
+              selected={selectedVenue === "cellana"}
+              onSelect={() => agg.cellana && setSelectedVenue("cellana")}
+            />
             {agg.best && (
               <div className="venue-row best-external">
                 <span className="venue-label">BEST EXTERNAL</span>
                 <span className="venue-amount">
-                  {fromRaw(agg.best.amountOutRaw, tOut.decimals).toFixed(6)} {outSym}
+                  {fromRaw(agg.best.amountOutRaw, tOut.decimals).toFixed(6)} {tOut.symbol}
                 </span>
                 <span className="venue-tag">{VENUE_LABEL[agg.best.venue]}</span>
               </div>
@@ -344,7 +414,7 @@ export function SwapPage() {
             <div>
               <span>Rate</span>
               <span className="val">
-                1 {inSym} = {rate > 0 ? rate.toFixed(6) : "—"} {outSym}
+                1 {tIn.symbol} = {rate > 0 ? rate.toFixed(6) : "—"} {tOut.symbol}
               </span>
             </div>
             <div>
@@ -354,7 +424,7 @@ export function SwapPage() {
             <div>
               <span>Min received</span>
               <span className="val">
-                {(amountOutFormatted * (1 - slippage)).toFixed(6)} {outSym}
+                {(amountOutFormatted * (1 - slippage)).toFixed(6)} {tOut.symbol}
               </span>
             </div>
           </div>

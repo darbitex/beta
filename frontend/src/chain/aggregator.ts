@@ -2,7 +2,7 @@ import { AGGREGATOR_PACKAGE, HYPERION_FEE_TIERS, type TokenConfig } from "../con
 import { viewFn } from "./client";
 
 // Which venue a quote came from.
-export type Venue = "darbitex" | "hyperion" | "liquidswap_stable";
+export type Venue = "darbitex" | "hyperion" | "liquidswap_stable" | "cellana";
 
 export type Quote = {
   venue: Venue;
@@ -10,6 +10,7 @@ export type Quote = {
   darbitexPool?: string;
   hyperionPool?: string;
   liquidswapTypes?: [string, string]; // [inCoin, outCoin]
+  cellanaIsStable?: boolean;
   amountOutRaw: bigint;
 };
 
@@ -17,7 +18,8 @@ export type AggregatorResult = {
   darbitex: Quote | null;
   hyperion: Quote | null;
   liquidswapStable: Quote | null;
-  best: Quote | null; // max amountOut across the three
+  cellana: Quote | null;
+  best: Quote | null; // max amountOut across all venues
 };
 
 function agg<T extends unknown[] = unknown[]>(
@@ -154,6 +156,46 @@ async function bestHyperionQuote(
   return { venue: "hyperion", hyperionPool: best.pool, amountOutRaw: best.out };
 }
 
+async function quoteCellanaCurve(
+  metaIn: string,
+  metaOut: string,
+  amountInRaw: bigint,
+  isStable: boolean,
+): Promise<bigint> {
+  try {
+    const res = await agg<[string | number]>("quote_cellana", [], [
+      metaIn,
+      metaOut,
+      amountInRaw.toString(),
+      isStable,
+    ]);
+    return BigInt(String(res[0] ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+
+// Cellana supports both stable and volatile curves per pair. Query both in
+// parallel, pick whichever has the higher net output. Either or both can
+// return 0 (no pool or insufficient liquidity) — handled silently.
+async function bestCellanaQuote(
+  metaIn: string,
+  metaOut: string,
+  amountInRaw: bigint,
+): Promise<Quote | null> {
+  const [volatile, stable] = await Promise.all([
+    quoteCellanaCurve(metaIn, metaOut, amountInRaw, false),
+    quoteCellanaCurve(metaIn, metaOut, amountInRaw, true),
+  ]);
+  if (volatile === 0n && stable === 0n) return null;
+  const useStable = stable > volatile;
+  return {
+    venue: "cellana",
+    cellanaIsStable: useStable,
+    amountOutRaw: useStable ? stable : volatile,
+  };
+}
+
 async function quoteLiquidswapStable(
   inCoinType: string,
   outCoinType: string,
@@ -186,7 +228,7 @@ export async function aggregateQuotes(params: {
 }): Promise<AggregatorResult> {
   const { tokenIn, tokenOut, amountInRaw, darbitexPool, darbitexAToB } = params;
 
-  const [darbitex, hyperion, liquidswapStable] = await Promise.all([
+  const [darbitex, hyperion, liquidswapStable, cellana] = await Promise.all([
     darbitexPool
       ? quoteDarbitex(darbitexPool, amountInRaw, darbitexAToB)
       : Promise.resolve(null),
@@ -194,13 +236,14 @@ export async function aggregateQuotes(params: {
     tokenIn.coinType && tokenOut.coinType
       ? quoteLiquidswapStable(tokenIn.coinType, tokenOut.coinType, amountInRaw)
       : Promise.resolve(null),
+    bestCellanaQuote(tokenIn.meta, tokenOut.meta, amountInRaw),
   ]);
 
   let best: Quote | null = null;
-  for (const q of [darbitex, hyperion, liquidswapStable]) {
+  for (const q of [darbitex, hyperion, liquidswapStable, cellana]) {
     if (!q) continue;
     if (!best || q.amountOutRaw > best.amountOutRaw) best = q;
   }
 
-  return { darbitex, hyperion, liquidswapStable, best };
+  return { darbitex, hyperion, liquidswapStable, cellana, best };
 }
