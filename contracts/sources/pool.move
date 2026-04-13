@@ -26,6 +26,7 @@ module darbitex::pool {
     const HOOK_SPLIT_PCT: u64 = 50;
     const MINIMUM_LIQUIDITY: u64 = 1_000;
     const SCALE: u128 = 1_000_000_000_000;
+    const U64_MAX: u64 = 18446744073709551615;
 
     // ===== Errors =====
 
@@ -37,13 +38,14 @@ module darbitex::pool {
     const E_WRONG_POOL: u64 = 6;
     const E_INSUFFICIENT_LP: u64 = 7;
     const E_WRONG_TOKEN: u64 = 8;
-    const E_RESERVED_9: u64 = 9;  // was E_SYMMETRIC_REQUIRED in early drafts, removed
+    const E_INVALID_HOOK_SLOT: u64 = 9;
     const E_K_VIOLATED: u64 = 10;
     const E_NOT_OWNER: u64 = 11;
     const E_NO_POSITION: u64 = 12;
     const E_NO_HOOK_NFT: u64 = 13;
     const E_NO_POOL: u64 = 14;
     const E_SAME_TOKEN: u64 = 15;
+    const E_DEADLINE: u64 = 16;
 
     // ===== Structs =====
 
@@ -77,7 +79,19 @@ module darbitex::pool {
         // Reentrancy guard
         locked: bool,
 
-        // TWAP (Uniswap V2 style cumulative)
+        // Liquidity-depth cumulative (NOT a price oracle). Each field is the
+        // time-integral of the corresponding reserve: Σ (reserve_a × dt) and
+        // Σ (reserve_b × dt). Delta-sampling gives a time-weighted average
+        // depth, NOT a time-weighted average price. Integrators looking for
+        // a V2-style price oracle should NOT read these fields directly —
+        // the ratio of these deltas is NOT the TWAP of reserve_b/reserve_a
+        // unless reserves are constant. Kept as "twap_" for source-compat
+        // with prior Beta integrations; renamed conceptually in docs only.
+        //
+        // u128 ceiling: for worst-case `reserve × dt` accumulation with
+        // reserve near u64::MAX, overflow-abort occurs after ~570 billion
+        // years of continuous operation. For realistic mainnet reserves
+        // (~10^15 raw units) the ceiling is effectively unreachable.
         twap_cumulative_a: u128,
         twap_cumulative_b: u128,
         twap_last_ts: u64,
@@ -228,9 +242,15 @@ module darbitex::pool {
         y
     }
 
-    /// Accumulate TWAP contribution for the elapsed time since last update.
-    /// Must be called BEFORE reserves mutate so the contribution reflects
-    /// the pre-mutation reserve ratio.
+    /// Accumulate liquidity-depth contribution for the elapsed time since
+    /// the last update. Must be called BEFORE reserves mutate so the
+    /// contribution reflects the pre-mutation reserves.
+    ///
+    /// NOTE: This is NOT a price-TWAP accumulator. It accumulates
+    /// `reserve × dt` per side, not `(reserve_b / reserve_a) × dt`.
+    /// See the field comment on `twap_cumulative_a/b` for the rationale
+    /// and the u128 overflow ceiling (practically unreachable for realistic
+    /// mainnet reserves — post-mainnet audit round, Gemini L-1 2026-04-13).
     fun update_twap(pool: &mut Pool) {
         let now = timestamp::now_seconds();
         let dt = now - pool.twap_last_ts;
@@ -634,6 +654,7 @@ module darbitex::pool {
 
         let pool = borrow_global_mut<Pool>(pool_addr);
         assert!(!pool.locked, E_LOCKED);
+        pool.locked = true;
 
         update_twap(pool);
 
@@ -642,10 +663,16 @@ module darbitex::pool {
         // of the two desired amounts is the tight side and use the other
         // side's proportional amount. The unused buffer stays in the
         // caller's wallet — we never withdraw more than the optimal pair.
-        let amount_b_optimal = (
-            ((amount_a_desired as u256) * (pool.reserve_b as u256)
-                / (pool.reserve_a as u256)) as u64
-        );
+        // Defensive cast guard: for pathologically skewed pools (reserve
+        // ratio > 2^64:1) the u256 result can exceed u64::MAX, in which
+        // case the raw `as u64` cast aborts with an opaque arithmetic
+        // error. An explicit assert produces E_INSUFFICIENT_LIQUIDITY
+        // instead (in-session audit L-2 2026-04-13).
+        let amount_b_optimal_u256 =
+            (amount_a_desired as u256) * (pool.reserve_b as u256)
+                / (pool.reserve_a as u256);
+        assert!(amount_b_optimal_u256 <= (U64_MAX as u256), E_INSUFFICIENT_LIQUIDITY);
+        let amount_b_optimal = (amount_b_optimal_u256 as u64);
         let (amount_a, amount_b) = if (amount_b_optimal <= amount_b_desired) {
             // amount_a is the tight side: use it in full, use only
             // amount_b_optimal of the b-side, leaving
@@ -655,10 +682,11 @@ module darbitex::pool {
             // amount_b is the tight side: compute the optimal a to match
             // amount_b_desired at the current ratio. This value is
             // guaranteed ≤ amount_a_desired by the ratio constraint.
-            let amount_a_optimal = (
-                ((amount_b_desired as u256) * (pool.reserve_a as u256)
-                    / (pool.reserve_b as u256)) as u64
-            );
+            let amount_a_optimal_u256 =
+                (amount_b_desired as u256) * (pool.reserve_a as u256)
+                    / (pool.reserve_b as u256);
+            assert!(amount_a_optimal_u256 <= (U64_MAX as u256), E_INSUFFICIENT_LIQUIDITY);
+            let amount_a_optimal = (amount_a_optimal_u256 as u64);
             // Sanity assert — mathematically this MUST hold given the
             // if-branch condition (`amount_b_optimal > amount_b_desired`
             // implies `amount_a_optimal < amount_a_desired` via the x*y=k
@@ -719,6 +747,7 @@ module darbitex::pool {
             timestamp: timestamp::now_seconds(),
         });
 
+        pool.locked = false;
         position
     }
 
@@ -756,6 +785,7 @@ module darbitex::pool {
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
         let pool = borrow_global_mut<Pool>(pool_addr);
         assert!(!pool.locked, E_LOCKED);
+        pool.locked = true;
         assert!(shares > 0, E_ZERO_AMOUNT);
         assert!(pool.lp_supply >= shares, E_INSUFFICIENT_LP);
 
@@ -806,6 +836,7 @@ module darbitex::pool {
         // Delete the position object.
         object::delete(delete_ref);
 
+        pool.locked = false;
         (fa_a, fa_b)
     }
 
@@ -890,6 +921,7 @@ module darbitex::pool {
         let nft_ref = borrow_global<HookNFT>(nft_addr);
         let pool_addr = nft_ref.pool_addr;
         let slot = nft_ref.slot;
+        assert!(slot == 0 || slot == 1, E_INVALID_HOOK_SLOT);
 
         assert!(exists<Pool>(pool_addr), E_NO_POOL);
         let pool = borrow_global_mut<Pool>(pool_addr);
@@ -970,7 +1002,10 @@ module darbitex::pool {
         let k_before = (reserve_in as u256) * (reserve_out as u256);
 
         // Fee on borrowed amount, minimum 1 so dust borrows still pay.
-        let fee_raw = amount * FLASH_FEE_BPS / BPS_DENOM;
+        // u256 intermediates for consistency with swap path (in-session
+        // audit L-1 2026-04-13): harmless today at FLASH_FEE_BPS=1, but
+        // guards against overflow if the constant is ever bumped.
+        let fee_raw = (((amount as u256) * (FLASH_FEE_BPS as u256) / (BPS_DENOM as u256)) as u64);
         let fee = if (fee_raw == 0) { 1 } else { fee_raw };
 
         let pool_signer = object::generate_signer_for_extending(&pool.extend_ref);
@@ -1066,9 +1101,8 @@ module darbitex::pool {
 
     // ===== Entry wrappers (user-facing convenience) =====
 
-    /// Entry variant of add_liquidity. Position NFT is minted to provider
-    /// address as part of create_object; no explicit transfer needed.
-    /// `min_shares_out` is the slippage floor — pass 0 for no protection.
+    /// Deprecated: no deadline parameter. New callers should use
+    /// `add_liquidity_entry_v2`. Kept for compat with existing integrations.
     public entry fun add_liquidity_entry(
         provider: &signer,
         pool_addr: address,
@@ -1079,9 +1113,22 @@ module darbitex::pool {
         let _ = add_liquidity(provider, pool_addr, amount_a, amount_b, min_shares_out);
     }
 
-    /// Entry variant of remove_liquidity. Deposits both returned FAs back to
-    /// provider's primary store. `min_amount_a` / `min_amount_b` are
-    /// slippage floors — pass 0 for no protection.
+    /// Add liquidity with deadline + slippage protection. `deadline` is a
+    /// unix-second timestamp; the call aborts if `now >= deadline`, letting
+    /// LPs bound the window during which a stale mempool TX can execute.
+    public entry fun add_liquidity_entry_v2(
+        provider: &signer,
+        pool_addr: address,
+        amount_a: u64,
+        amount_b: u64,
+        min_shares_out: u64,
+        deadline: u64,
+    ) acquires Pool {
+        assert!(timestamp::now_seconds() < deadline, E_DEADLINE);
+        let _ = add_liquidity(provider, pool_addr, amount_a, amount_b, min_shares_out);
+    }
+
+    /// Deprecated: no deadline parameter. Use `remove_liquidity_entry_v2`.
     public entry fun remove_liquidity_entry(
         provider: &signer,
         position: Object<LpPosition>,
@@ -1094,7 +1141,22 @@ module darbitex::pool {
         primary_fungible_store::deposit(provider_addr, fa_b);
     }
 
-    /// Entry variant of claim_lp_fees.
+    /// Remove liquidity with deadline + slippage protection.
+    public entry fun remove_liquidity_entry_v2(
+        provider: &signer,
+        position: Object<LpPosition>,
+        min_amount_a: u64,
+        min_amount_b: u64,
+        deadline: u64,
+    ) acquires Pool, LpPosition {
+        assert!(timestamp::now_seconds() < deadline, E_DEADLINE);
+        let provider_addr = signer::address_of(provider);
+        let (fa_a, fa_b) = remove_liquidity(provider, position, min_amount_a, min_amount_b);
+        primary_fungible_store::deposit(provider_addr, fa_a);
+        primary_fungible_store::deposit(provider_addr, fa_b);
+    }
+
+    /// Deprecated: no deadline parameter. Use `claim_lp_fees_entry_v2`.
     public entry fun claim_lp_fees_entry(
         provider: &signer,
         position: Object<LpPosition>,
@@ -1105,11 +1167,37 @@ module darbitex::pool {
         primary_fungible_store::deposit(provider_addr, fa_b);
     }
 
-    /// Entry variant of claim_hook_fees.
+    /// Claim LP fees with deadline guard.
+    public entry fun claim_lp_fees_entry_v2(
+        provider: &signer,
+        position: Object<LpPosition>,
+        deadline: u64,
+    ) acquires Pool, LpPosition {
+        assert!(timestamp::now_seconds() < deadline, E_DEADLINE);
+        let provider_addr = signer::address_of(provider);
+        let (fa_a, fa_b) = claim_lp_fees(provider, position);
+        primary_fungible_store::deposit(provider_addr, fa_a);
+        primary_fungible_store::deposit(provider_addr, fa_b);
+    }
+
+    /// Deprecated: no deadline parameter. Use `claim_hook_fees_entry_v2`.
     public entry fun claim_hook_fees_entry(
         caller: &signer,
         nft: Object<HookNFT>,
     ) acquires Pool, HookNFT {
+        let caller_addr = signer::address_of(caller);
+        let (fa_a, fa_b) = claim_hook_fees(caller, nft);
+        primary_fungible_store::deposit(caller_addr, fa_a);
+        primary_fungible_store::deposit(caller_addr, fa_b);
+    }
+
+    /// Claim hook fees with deadline guard.
+    public entry fun claim_hook_fees_entry_v2(
+        caller: &signer,
+        nft: Object<HookNFT>,
+        deadline: u64,
+    ) acquires Pool, HookNFT {
+        assert!(timestamp::now_seconds() < deadline, E_DEADLINE);
         let caller_addr = signer::address_of(caller);
         let (fa_a, fa_b) = claim_hook_fees(caller, nft);
         primary_fungible_store::deposit(caller_addr, fa_a);
@@ -1158,6 +1246,10 @@ module darbitex::pool {
         (p.hook_1_fee_a, p.hook_1_fee_b, p.hook_2_fee_a, p.hook_2_fee_b)
     }
 
+    /// Liquidity-depth cumulative (not a price oracle). Returns
+    /// `(Σ reserve_a × dt, Σ reserve_b × dt, last_update_ts)`. Integrators
+    /// must not interpret `(a_delta / b_delta)` as a TWAP of the reserve
+    /// ratio — that equality only holds when reserves are constant.
     #[view]
     public fun twap_cumulative(pool_addr: address): (u128, u128, u64) acquires Pool {
         let p = borrow_global<Pool>(pool_addr);

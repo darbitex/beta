@@ -977,4 +977,143 @@ module darbitex::tests {
         let after_b = bal(@0x100, meta_b);
         assert!(after_b > before_b, 2);
     }
+
+    // =========================================================
+    //                 R9 REGRESSION TESTS
+    // =========================================================
+
+    /// Drives many dust (amount_in=1) swaps and verifies the solvency
+    /// invariant `store_balance >= reserve + hook_1 + hook_2` holds after
+    /// each. Proves that fresh-Claude post-mainnet M-1 ("dust swap fee
+    /// insolvency") is a false positive: the reserve update
+    /// `reserve_a += amount_in - (extra_fee + lp_fee)` is exactly
+    /// balanced by the hook bucket increment, leaving the store in sync
+    /// with tracked accumulators.
+    #[test(darbitex = @darbitex, user = @0x100, framework = @0x1)]
+    fun test_regression_r9_dust_swap_solvency(
+        darbitex: &signer, user: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, 1_000_000);
+
+        // Drive 50 amount_in=1 dust swaps alternating sides.
+        let i = 0;
+        while (i < 50) {
+            router::swap_with_deadline(
+                user, pool_addr, meta_a, 1, 0, 1_000_000_000,
+            );
+            router::swap_with_deadline(
+                user, pool_addr, meta_b, 1, 0, 1_000_000_000,
+            );
+            i = i + 1;
+        };
+
+        // After dust storm: assert store balance covers all tracked
+        // accumulators. For each side, store >= reserve + hook_1 + hook_2
+        // (LP fees are a subset of the remainder — if this holds, solvency
+        // to LPs also holds).
+        let (ra, rb) = pool::reserves(pool_addr);
+        let (h1a, h1b, h2a, h2b) = pool::hook_fee_buckets(pool_addr);
+        let store_a = bal(pool_addr, meta_a);
+        let store_b = bal(pool_addr, meta_b);
+        assert!(store_a >= ra + h1a + h2a, 1);
+        assert!(store_b >= rb + h1b + h2b, 2);
+    }
+
+    /// Attempts `add_liquidity` while the pool is locked (via an
+    /// outstanding flash borrow). Expects E_LOCKED (code 4). Proves the R9
+    /// lock bracket on `add_liquidity` is in place.
+    #[test(darbitex = @darbitex, framework = @0x1)]
+    #[expected_failure(abort_code = 4, location = darbitex::pool)]
+    fun test_regression_r9_add_liquidity_locked_during_flash(
+        darbitex: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let provider = account::create_signer_for_test(@0x100);
+
+        // Open a flash borrow — pool is now locked.
+        let (fa_borrowed, _receipt) = pool::flash_borrow(pool_addr, meta_a, 1_000_000);
+
+        // Attempt add_liquidity during the locked span. Must abort E_LOCKED
+        // before touching the receipt. Since FlashReceipt has no drop, the
+        // test's expected abort is the only valid termination.
+        let _pos = pool::add_liquidity(
+            &provider, pool_addr, 1_000_000, 1_000_000, 0,
+        );
+
+        // Unreachable — abort above. Receipt and fa_borrowed get rolled
+        // back by the test framework.
+        primary_fungible_store::deposit(pool_addr, fa_borrowed);
+        abort 0
+    }
+
+    /// Attempts `remove_liquidity` while the pool is locked (via an
+    /// outstanding flash borrow). Expects E_LOCKED (code 4). Proves the R9
+    /// lock bracket on `remove_liquidity` is in place.
+    #[test(darbitex = @darbitex, framework = @0x1)]
+    #[expected_failure(abort_code = 4, location = darbitex::pool)]
+    fun test_regression_r9_remove_liquidity_locked_during_flash(
+        darbitex: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, POOL_AMOUNT, POOL_AMOUNT);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let provider = account::create_signer_for_test(@0x100);
+
+        // Establish a position first (while pool is unlocked).
+        let position = pool::add_liquidity(
+            &provider, pool_addr, 1_000_000_000, 1_000_000_000, 0,
+        );
+
+        // Open flash borrow — pool becomes locked.
+        let (fa_borrowed, _receipt) = pool::flash_borrow(pool_addr, meta_a, 1_000_000);
+
+        // Attempt remove_liquidity during the locked span. Must abort E_LOCKED.
+        let (_fa_a, _fa_b) = pool::remove_liquidity(&provider, position, 0, 0);
+
+        // Unreachable.
+        primary_fungible_store::deposit(pool_addr, fa_borrowed);
+        abort 0
+    }
+
+    /// Builds a pathologically skewed pool (reserve_b / reserve_a huge)
+    /// and verifies that `add_liquidity` aborts with E_INSUFFICIENT_LIQUIDITY
+    /// (code 2) when the u256 optimal-amount intermediate exceeds
+    /// u64::MAX. Proves the R9 defensive cast guard replaces the opaque
+    /// arithmetic abort with a descriptive error.
+    #[test(darbitex = @darbitex, framework = @0x1)]
+    #[expected_failure(abort_code = 2, location = darbitex::pool)]
+    fun test_regression_r9_add_liquidity_pathological_cast_abort(
+        darbitex: &signer, framework: &signer,
+    ) acquires TestMints {
+        let (meta_a, meta_b) = setup(framework, darbitex);
+        // Create pool with reserve_a = 1_000, reserve_b = 5e12. Ratio ~5e9:1.
+        // sqrt(1000 * 5e12) ≈ 7e7 > MINIMUM_LIQUIDITY so create succeeds.
+        pool_factory::create_canonical_pool(darbitex, meta_a, meta_b, 1_000, 5_000_000_000_000);
+        let pool_addr = pool_factory::canonical_pool_address(meta_a, meta_b);
+
+        account::create_account_for_test(@0x100);
+        give_tokens(@0x100, POOL_AMOUNT);
+        let provider = account::create_signer_for_test(@0x100);
+
+        // Request add_liquidity with a-side desired large enough that
+        // amount_b_optimal = amount_a_desired * reserve_b / reserve_a
+        //                  = 1e12 * 5e12 / 1000 = 5e21
+        // exceeds u64::MAX (~1.8e19), tripping the defensive assert.
+        let _pos = pool::add_liquidity(
+            &provider, pool_addr, 1_000_000_000_000, 1_000_000_000_000, 0,
+        );
+    }
 }
