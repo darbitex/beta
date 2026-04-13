@@ -6,12 +6,24 @@ or burn operation.
 
 > **⚠ IMPORTANT — read before funding anything.** `site-builder update` may
 > repack resources into new quilts on any deploy, orphaning the previously
-> referenced quilts. WAL funded into an orphaned `SharedBlob` pool is NOT
-> recoverable (shared blobs cannot be burned by the operational wallet — they
-> only release when the lease naturally expires). This means:
+> referenced quilts. WAL funded into an orphaned `SharedBlob` pool is
+> **permanently locked** — verified by reading
+> `contracts/walrus/sources/system/shared_blob.move` (MystenLabs/walrus main):
+> the module has no `destroy`/`withdraw`/`refund`/`take_funds` function, the
+> `SharedBlob` is `share_object`'d at creation and never consumable by-value,
+> and `extend` is a closed loop that cannot release funds to a caller. Even
+> waiting for the underlying `Blob` lease to expire does not unlock anything —
+> the `SharedBlob` becomes a permanent tombstone object with `Balance<WAL>`
+> addressable via view but immovable. Recovery would require an upstream
+> Walrus package upgrade adding a drain function. This means:
 > - **Max-lease funding is only economical for quilts you commit not to
 >   redeploy.** For an actively iterating frontend, each deploy can burn the
->   pool of the previous quilts.
+>   pool of the previous quilts — permanently, with no refund path.
+> - **Extend cycles are load-bearing, not hygiene.** If a funded shared blob
+>   misses enough `extend --shared` cron cycles that the underlying `Blob`
+>   fully expires, every remaining WAL in the pool is burned at that moment
+>   (extend on expired blob aborts). This is true even for quilts still
+>   actively referenced by the live site.
 > - **Public funding is currently PAUSED** (see "Public funding & extension"
 >   below). Do not advertise donation flows until we have either a frozen
 >   archival site object or verified quilt-reuse behavior across deploys.
