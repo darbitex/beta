@@ -526,11 +526,57 @@ Still awaiting: Gemini, DeepSeek, Qwen, ChatGPT. No fixes until cycle ends.
 
 ---
 
+## Round 5 (post-mainnet) — Gemini 2.5 Pro
+
+**Auditor:** Gemini 2.5 Pro (Google)
+**Date:** 2026-04-13
+**Verdict:** 🟡 YELLOW — 0 HIGH / 0 MEDIUM / 1 LOW (TWAP bricking) / 2 INFO
+
+### Executive summary (verbatim)
+
+The DarbitexBeta protocol demonstrates a high standard of defensive programming. The developers have clearly integrated learnings from previous audits, particularly regarding sandwich attacks, overflow risks, and flash loan reserve accounting. The codebase is well-structured and uses Aptos standards effectively.
+
+### Code quality & defenses (verbatim)
+
+- **Robust Multi-Hop Slippage Protection:** The `router.move` module enforces per-hop minimum outputs (`min_out_hop1`, `min_out_hop2`, etc.) for multi-hop swaps. This effectively mitigates intermediate sandwich attacks where an attacker might extract value from unprotected middle routing pools.
+- **Overflow Preventions in AMM Math:** The `pool.move` module correctly casts values to `u256` before performing intermediate multiplications in the $x \cdot y = k$ swap equation. This addresses the risk of `u128` overflows when both `amount_in` and `reserve_out` are near their maximum `u64` limits.
+- **Flash Loan Reserve Accounting:** The contract correctly avoids inflating pool reserves during a flash loan. The `flash_borrow` function does not deduct from reserves, and `flash_repay` does not add the principal back to the reserves.
+- **Strict Equality on Repayment:** The `flash_repay` function enforces strict equality (`repay_total == amount + fee`). This ensures users do not accidentally trap excess funds in the pool's primary store due to clumsy slippage or overpayment.
+- **Reentrancy Protections:** Although Aptos Fungible Asset (FA) transfers currently lack dynamic dispatch hooks that allow reentrancy, the code includes a `pool.locked` boolean flag to guard against future framework updates.
+- **First-Depositor Attack Mitigation:** During pool creation, a dead `MINIMUM_LIQUIDITY` (1,000 shares) is locked to prevent inflation attacks from the first depositor.
+
+### Findings
+
+#### L-1 — TWAP Accumulator Bricking Risk
+
+**Location:** `pool.move:234-242`
+
+The Time-Weighted Average Price (TWAP) accumulator calculates updates using `pool.twap_cumulative_a + (pool.reserve_a as u128) * (dt as u128)`. Unlike Solidity, where variables can silently wrap around on overflow, Move arithmetic aborts on overflow by default. If a pool holds a massive reserve of high-decimal tokens and runs for many years, this `u128` addition could eventually overflow. This would abort the `update_twap` call, effectively bricking the pool for all future swaps.
+
+**Recommendation:** Consider tracking cumulative prices using `u256` or implementing a safe, explicit wrapping math mechanism to ensure perpetual pool longevity.
+
+#### I-1 — Unguarded `buy_hook` Front-running
+
+**Location:** `pool_factory.move`
+
+The `buy_hook` function allows permissionless purchasing of HookNFT #2 from the factory escrow at a listed price. Because `set_hook_price` only impacts *future* pools, if an admin sets a higher price, a bot might front-run a pool creation to buy the hook at the old price before the ecosystem realizes it.
+
+**Recommendation:** This is likely acceptable given the design, but frontends should be aware of this dynamic.
+
+#### I-2 — Zero-Value Swap Edge Cases
+
+**Location:** `pool.move` `swap()` / `accrue_fee()`
+
+While `swap_with_deadline` enforces `amount_in > 0`, the internal `swap` function floors the swap fee logic. For "dust swaps," the protocol explicitly forces `extra_fee` to a minimum of 1 so that these tiny swaps still generate hook revenue.
+
+**Recommendation:** Validate that these forced minimal fees cannot be exploited in loops to drain small user balances unexpectedly.
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
 
-- Gemini 2.5 Pro — pending
 - DeepSeek — pending
 - Qwen — pending
 - ChatGPT (GPT-5) — pending
