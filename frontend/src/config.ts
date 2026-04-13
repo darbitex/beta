@@ -27,9 +27,10 @@ export const NETWORK = Network.MAINNET;
 export const SLIPPAGE = 0.005;
 
 // Aggregator quote debounce (ms). Waits this long after input stops changing
-// before firing the parallel view calls. Tuned to not exceed the per-IP budget
-// on a sustained-typing user even at the extreme case.
-export const QUOTE_DEBOUNCE_MS = 800;
+// before firing the parallel view calls. Tuned conservatively — on a heavily
+// rate-limited IP (dev laptop with past bot traffic) every burst counts, so
+// we let the user pause briefly before firing quotes.
+export const QUOTE_DEBOUNCE_MS = 1500;
 
 // Hyperion CLMM fee tiers (u8 enum). All six valid mainnet values.
 // Frontend enumerates these to find the best-liquidity pool for a pair.

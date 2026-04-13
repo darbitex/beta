@@ -1,7 +1,44 @@
 import type { TokenConfig } from "../config";
 import { metaEq, viewFn } from "./client";
-import { logError, logWarn } from "./logger";
+import { logError, logInfo, logWarn } from "./logger";
 import { getTokenInfo } from "./tokens";
+
+// Pool data cache in localStorage. Reduces cold-start RPC pressure on IPs
+// that are rate-limited (dev laptops with past bot traffic, shared NAT, etc).
+// TTL is intentionally short so reserves/supply stay reasonably fresh.
+const POOL_CACHE_KEY = "darbitex.poolsCache";
+const POOL_CACHE_TTL_MS = 60_000;
+
+type PoolCacheEntry = {
+  ts: number;
+  pools: Pool[];
+};
+
+function readCache(): Pool[] | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(POOL_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PoolCacheEntry;
+    if (!parsed || typeof parsed.ts !== "number") return null;
+    if (Date.now() - parsed.ts > POOL_CACHE_TTL_MS) return null;
+    return parsed.pools;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(pools: Pool[]): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(
+      POOL_CACHE_KEY,
+      JSON.stringify({ ts: Date.now(), pools } as PoolCacheEntry),
+    );
+  } catch {
+    // quota exceeded — drop
+  }
+}
 
 export type Pool = {
   addr: string;
@@ -23,18 +60,29 @@ function extractInner(x: unknown): string {
   return String(x);
 }
 
-// Load pools sequentially with explicit retries on transient errors. The
-// outer loop iterates pools one at a time, and each pool fetches its 4
-// view calls in parallel (small burst, spread across 3 RPC endpoints via
-// rotatedView — bounded). Any view failure is logged with full context so
-// the user can export logs via Ctrl+Shift+L and we can diagnose offline.
+// Load pools sequentially with explicit retries on transient errors. A
+// localStorage cache short-circuits the load entirely when fresh, which
+// dramatically reduces cold-start RPC pressure on rate-limited IPs.
+// Any view failure is logged with full context so the user can export
+// logs via Ctrl+Shift+L and we can diagnose offline.
 export async function loadPools(): Promise<Pool[]> {
+  const cached = readCache();
+  if (cached && cached.length > 0) {
+    logInfo("pools", `pool cache hit (${cached.length} pools)`);
+    return cached;
+  }
+
   let addrs: string[] = [];
   try {
     const addrRes = await viewFn<[string[]]>("pool_factory::get_all_pools");
     addrs = addrRes[0] ?? [];
   } catch (e) {
     logError("pools", "get_all_pools failed", e);
+    // On failure, return stale cache if any — better than nothing.
+    if (cached && cached.length > 0) {
+      logWarn("pools", `returning stale cache (${cached.length} pools) after get_all_pools failure`);
+      return cached;
+    }
     return [];
   }
 
@@ -44,6 +92,7 @@ export async function loadPools(): Promise<Pool[]> {
     if (loaded) pools.push(loaded);
     else logWarn("pools", `pool dropped from universe: ${addr}`);
   }
+  if (pools.length > 0) writeCache(pools);
   return pools;
 }
 

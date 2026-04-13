@@ -1,10 +1,38 @@
 import { Aptos, AptosConfig, type InputViewFunctionData, type MoveValue } from "@aptos-labs/ts-sdk";
 import { NETWORK, PACKAGE, RPC_LIST } from "../config";
 
+// Power-user escape hatch: if localStorage has a `darbitex.rpcOverride` key
+// (JSON array of URLs), those endpoints are prepended to the pool. Intended
+// for devs whose IP is heavily rate-limited on Aptos Labs public — they can
+// set their own QuickNode/Alchemy URL in the browser console and it will
+// never leak into the public bundle or be seen by other users.
+//
+//   localStorage.setItem('darbitex.rpcOverride', JSON.stringify([
+//     "https://my-quicknode-url.aptos-mainnet.quiknode.pro/KEY/v1",
+//   ]));
+//
+// Then reload. The override clients are tried first in rotation.
+function readRpcOverride(): string[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem("darbitex.rpcOverride");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x): x is string => typeof x === "string" && x.startsWith("http"));
+    }
+  } catch {
+    // ignore malformed override
+  }
+  return [];
+}
+
+const effectiveRpcList: string[] = [...readRpcOverride(), ...RPC_LIST];
+
 // One Aptos client per RPC in the pool. Round-robin rotation per call spreads
 // load across endpoints and preserves the per-IP budget model (each user still
 // hits all endpoints from their own IP, no shared quota).
-const aptosClients: Aptos[] = RPC_LIST.map(
+const aptosClients: Aptos[] = effectiveRpcList.map(
   (rpc) => new Aptos(new AptosConfig({ network: NETWORK, fullnode: rpc })),
 );
 
