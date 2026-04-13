@@ -1,6 +1,6 @@
 [package]
 name = "DarbitexAggregator"
-version = "0.1.0"
+version = "0.2.0"
 upgrade_policy = "compatible"
 authors = ["Rera", "Claude (Anthropic)"]
 
@@ -16,3 +16,4 @@ AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", su
 DarbitexBeta = { local = "../../contracts" }
 HyperionAdapter = { local = "../hyperion_adapter" }
 LiquidswapAdapter = { local = "../liquidswap_adapter" }
+cellana = { local = "deps/cellana" }

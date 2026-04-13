@@ -1,0 +1,19 @@
+[package]
+name = 'cellana'
+version = '1.0.0'
+upgrade_policy = "compatible"
+
+[addresses]
+cellana = "0x4bf51972879e3b95c4781a5cdcb9e1ee24ef483e7d22f2d903626f126df62bd1"
+team = "0x79cf8d0de14ee21f84c6a4d4deda0e045a6811685608df7de7f7e0230069cf12"
+airdrop = "0x5a3c019cffa27fa3869b4a8c366029d37c9249a02443c0293fa7abb0fe71f1bb"
+public_sale = "0x6c4318e95db8b2a3c12b4ab8009bc8f1ca49ec2d664a84613827650a2b8121af"
+liquidity = "0xb7cf3d3c1c975d354a5eaeddab117d230ddd479971594da7395f9d3f61cdf4be"
+marketing = "0xd778dd30e393281d57e8e07740fbc9a61a91e4f6663754682e23c6ee09f6b865"
+ecosystem = "0xa41d80f6a181597aca8980a9657ea2f55d084ad44b198918637cb500be8ad77f"
+protocols = "0x82d36fe0e594802ee8c27b100a74ae51ddbbb81f994cf1bb9b0a766ca3a5e6ca"
+incentive = "0x8005c934339b2fa2b2747aee7f38efc2f9fe54dcd40db2d53f09db8f57206488"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+AptosTokenObjects = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-token-objects", rev = "mainnet" }

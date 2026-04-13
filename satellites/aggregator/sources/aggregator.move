@@ -22,6 +22,8 @@ module darbitex_aggregator::aggregator {
     use hyperion_adapter::adapter as hyperion;
     use liquidswap_adapter::darbitex_liquidswap as liquidswap;
     use dex_contract::pool_v3;
+    use cellana::router as cellana_router;
+    use cellana::liquidity_pool as cellana_pool;
 
     // ===== Errors =====
 
@@ -90,6 +92,42 @@ module darbitex_aggregator::aggregator {
         hyperion::reserves(pool)
     }
 
+    // ===== Cellana views =====
+    // Cellana uses a dual-curve (stable/volatile) AMM with FA-native primitives.
+    // The frontend is expected to try both is_stable values for a pair and
+    // pick whichever has better output, since both can coexist per pair.
+
+    #[view]
+    // Quote a Cellana pool for the given direction + curve. Returns only the
+    // net amount_out; Cellana's underlying get_amount_out returns (out, fee)
+    // and the fee is dropped here.
+    public fun quote_cellana(
+        metadata_in: Object<Metadata>,
+        metadata_out: Object<Metadata>,
+        amount_in: u64,
+        is_stable: bool,
+    ): u64 {
+        let (amount_out, _fee) = cellana_router::get_amount_out(
+            amount_in,
+            metadata_in,
+            metadata_out,
+            is_stable,
+        );
+        amount_out
+    }
+
+    #[view]
+    // Cellana derives the pool address from (meta_a, meta_b, is_stable) via
+    // its liquidity_pool object. Returned as plain address for cleaner
+    // frontend consumption (no Object<T> unwrap needed).
+    public fun cellana_pool_address(
+        meta_a: Object<Metadata>,
+        meta_b: Object<Metadata>,
+        is_stable: bool,
+    ): address {
+        object::object_address(&cellana_pool::liquidity_pool(meta_a, meta_b, is_stable))
+    }
+
     // ===== Entries =====
 
     /// Swap via Darbitex. Thin pass-through to `router::swap_with_deadline`.
@@ -143,5 +181,25 @@ module darbitex_aggregator::aggregator {
     ) {
         assert!(timestamp::now_seconds() <= deadline, E_DEADLINE);
         liquidswap::swap_stable<X, Y>(caller, metadata_in, amount_in, min_out);
+    }
+
+    /// Swap via Cellana. Withdraws FA from caller, routes through Cellana's
+    /// composable router::swap primitive, deposits output back. Supports both
+    /// stable and volatile curves via the is_stable flag.
+    public entry fun swap_cellana(
+        caller: &signer,
+        metadata_in: Object<Metadata>,
+        metadata_out: Object<Metadata>,
+        is_stable: bool,
+        amount_in: u64,
+        min_out: u64,
+        deadline: u64,
+    ) {
+        assert!(timestamp::now_seconds() <= deadline, E_DEADLINE);
+        assert!(amount_in > 0, E_ZERO_AMOUNT);
+        let caller_addr = signer::address_of(caller);
+        let fa_in = primary_fungible_store::withdraw(caller, metadata_in, amount_in);
+        let fa_out = cellana_router::swap(fa_in, min_out, metadata_out, is_stable);
+        primary_fungible_store::deposit(caller_addr, fa_out);
     }
 }

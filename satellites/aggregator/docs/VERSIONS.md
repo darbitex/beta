@@ -1,5 +1,27 @@
 # DarbitexAggregator Versions
 
+## 0.2.0 — DEPLOYED 2026-04-13
+
+**Upgrade tx:** `0x36038f41b3a5c0e6a58095a9a61393999b9553da5038f878a4d7fe3e5e05a761`
+**Propose tx:** `0xd359dd87fedb9eb8362cc8e46e9f9e9ec476721a0eb35131ae8da0d297b64774`
+
+**On-chain smoke tests:**
+- `quote_cellana(APT-wrap, lzUSDC-wrap, 1e6, volatile)` → 8219 raw lzUSDC (pool `0x234f0be5...`, matches memory)
+- `cellana_pool_address(APT-wrap, lzUSDC-wrap, volatile)` → `0x234f0be5...`
+- `quote_cellana(nUSDC, Cellana-lzUSDC-wrap, 10000, stable)` → 9996 raw (stable curve)
+- `swap_cellana` entry nUSDC → Cellana-lzUSDC-wrap 10k raw → +9996 lzUSDC balance, tx `0x...348`
+
+**Multisig raised 1/5 → 3/5** post-deploy via proposal seq #2, exec tx `0x7f733ff288d5532156b9db12269849940273bdcc0a69e896d5a6f02a5c704d2d`. Future upgrades need 3 approvals.
+
+
+
+Add Cellana venue (Tier-1 per `darbitex_aptos_targets.md`). Two new #[view] functions and one new entry function. Backward-compatible upgrade on the existing multisig publisher.
+
+- `#[view] quote_cellana(meta_in, meta_out, amount_in, is_stable) -> u64` — wraps `cellana::router::get_amount_out`, returns net amount_out (fee dropped from the tuple)
+- `#[view] cellana_pool_address(meta_a, meta_b, is_stable) -> address` — wraps `cellana::liquidity_pool::liquidity_pool` and returns the object address (not the Object<T> wrapper)
+- `public entry swap_cellana(caller, meta_in, meta_out, is_stable, amount_in, min_out, deadline)` — withdraws FA from caller, routes via `cellana::router::swap` composable, deposits output back, deadline-guarded
+- New dep: `cellana` (local bytecode package downloaded from mainnet `0x4bf51972...` via `aptos move download --bytecode`, decompiled to `.mv.move` sources, `FeesAccounting` acquires annotation stripped from `liquidity_pool::mint_lp` to fix an unnecessary-acquires compile error in the decompiled bytecode)
+
 ## 0.1.0 — DEPLOYED 2026-04-13
 
 **Package address:** `0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47`
