@@ -9,10 +9,14 @@ export const LIQUIDSWAP_ADAPTER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6b
 // All endpoints are free, unauthenticated, and per-IP rate-limited on the
 // caller side (preserves the decentralized "each user brings own budget"
 // model — no shared paid quota).
+// Polkachu was dropped 2026-04-13: their CORS preflight returns two
+// `Access-Control-Allow-Origin` headers (specific + wildcard), which
+// violates the spec and causes browsers to reject the response with
+// "TypeError: Failed to fetch". Aptos Labs' two hostnames have clean
+// CORS and are currently the only viable public browser-callable options.
 export const RPC_LIST: string[] = [
   "https://fullnode.mainnet.aptoslabs.com/v1",
   "https://api.mainnet.aptoslabs.com/v1",
-  "https://aptos-api.polkachu.com/v1",
 ];
 
 // Legacy single-RPC export; points to the first entry. Some consumers may

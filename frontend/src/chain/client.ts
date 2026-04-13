@@ -22,11 +22,17 @@ export const aptos = aptosClients[0];
 
 // Heuristic: is this error "transient" — safe to retry on another provider?
 // Rate limits, gateway errors, JSON parse failures (typical of HTML error
-// pages returned under 429) all indicate a provider-side problem rather than
-// a legitimate Move abort. Move aborts are deterministic across providers,
-// so retrying them just wastes latency — we throw those immediately.
+// pages returned under 429), and browser fetch network errors all indicate
+// a provider-side or transport problem rather than a legitimate Move abort.
+// Move aborts are deterministic across providers, so retrying them just
+// wastes latency — we throw those immediately.
 function isTransientError(err: unknown): boolean {
-  const msg = String((err as Error)?.message ?? err).toLowerCase();
+  const asErr = err as { name?: string; message?: string };
+  const msg = String(asErr?.message ?? err).toLowerCase();
+  // Browser fetch API throws TypeError("Failed to fetch") for any network,
+  // DNS, or CORS failure. Any TypeError whose message mentions fetch is a
+  // transport issue that a different endpoint may not have.
+  if (asErr?.name === "TypeError" && msg.includes("fetch")) return true;
   return (
     msg.includes("429") ||
     msg.includes("503") ||
@@ -38,7 +44,11 @@ function isTransientError(err: unknown): boolean {
     msg.includes("bad gateway") ||
     msg.includes("unexpected token") ||
     msg.includes("json") ||
+    // Browser fetch variants across engines.
+    msg.includes("failed to fetch") ||
     msg.includes("fetch failed") ||
+    msg.includes("networkerror") ||
+    msg.includes("load failed") ||
     msg.includes("network") ||
     msg.includes("timeout") ||
     msg.includes("aborted")
