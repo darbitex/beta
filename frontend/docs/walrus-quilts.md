@@ -4,6 +4,22 @@ Source of truth for which Walrus blobs (quilts) back the live Darbitex site.
 Cross-check this file against on-chain state before any deploy, extend, share,
 or burn operation.
 
+> **⚠ IMPORTANT — read before funding anything.** `site-builder update` may
+> repack resources into new quilts on any deploy, orphaning the previously
+> referenced quilts. WAL funded into an orphaned `SharedBlob` pool is NOT
+> recoverable (shared blobs cannot be burned by the operational wallet — they
+> only release when the lease naturally expires). This means:
+> - **Max-lease funding is only economical for quilts you commit not to
+>   redeploy.** For an actively iterating frontend, each deploy can burn the
+>   pool of the previous quilts.
+> - **Public funding is currently PAUSED** (see "Public funding & extension"
+>   below). Do not advertise donation flows until we have either a frozen
+>   archival site object or verified quilt-reuse behavior across deploys.
+> - **Default deploy lease is now short** (see Deploy checklist) to limit the
+>   blast radius of any single deploy.
+> - **Always run `site-builder update --dry-run ...` first** to see which
+>   existing quilts would be reused vs created anew before paying FROST.
+
 ## Live site
 
 - **Site Object ID:** `0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
@@ -47,6 +63,13 @@ zero-downtime and no site-object update was required.
 
 ## Public funding & extension
 
+> **⚠ PAUSED as of 2026-04-13.** See warning at top of file. Do not advertise
+> public funding or run max-lease extend campaigns while the frontend is still
+> iterating — any `site-builder update` can orphan the funded quilt and lock
+> WAL in an unrecoverable pool. The mechanics below are preserved as reference
+> for when we have a frozen archival site, but MUST NOT be promoted
+> externally until that split exists (see "Planned dev/archival split" below).
+
 Anyone — community members, users, bots — can keep these quilts alive without
 access to the operational wallet. The flow is **two separate operations**:
 
@@ -77,13 +100,11 @@ Walrus `max_epochs_ahead` (currently 53 epochs / ~2 years).
 
 ### Pricing reference
 
-- Tier ≤16 MiB unencoded = **0.0015 WAL / epoch** (both quilts fall in this tier)
-- Both quilts fully funded 2026-04-13 with 3.229 WAL each (= 6.458 WAL total,
-  the entire operational wallet WAL balance). At 0.0015 WAL per epoch, that
-  is ~2150 epochs of runway per quilt, far exceeding any practical horizon
-  (Walrus protocol caps lease extensions at 53 epochs ahead, so most of the
-  pool sits idle as future headroom)
-- Any community top-ups further extend the runway
+- Tier ≤16 MiB unencoded = **0.0015 WAL / epoch**
+- The 2026-04-13 deploy orphaned the two previously funded quilts
+  (`0xa8d80bbd...` and `0x107f20be...`), locking ~6.458 WAL in their
+  SharedBlob pools until natural expiry at epoch 81. This is why
+  max-lease public funding is now paused — see warning at top of file.
 
 ### When to trigger extend
 
@@ -122,19 +143,55 @@ shared object in the table above must show `owner: Shared` and type
 Every production deploy MUST follow every step:
 
 1. `npm run build`
-2. `site-builder update --epochs 53 dist 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
+2. **Dry-run first** (no FROST spent):
+   `site-builder update --dry-run --epochs 5 dist 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
+   - Review: which existing quilts are REUSED vs which will be CREATED anew
+   - If the output shows ALL existing referenced quilts being replaced on a
+     small change, STOP and investigate `--max-quilt-size` or file-level
+     changes before paying — a repack orphans every referenced quilt
+   - `site-builder` help states: *"Existing quilts are reused automatically
+     without additional FROST spending"* — verify this is actually happening
+3. `site-builder update --epochs 5 dist 0x050df98fbc08b6c4e5d8d41dc75835c2a2d491cc1c9687d8782a2b513a217718`
    - **Always** use `update`, never `publish` (SuiNS is bound to the object ID)
-   - **Always** pass `--epochs 53` to buy max lease
-3. `site-builder sitemap <site_id>` — note which blob object IDs are new
-4. `walrus --context mainnet list-blobs` — find new owned blob object IDs
-5. For each NEW owned blob: `walrus --context mainnet share --blob-obj-id <id>`
+   - **Default `--epochs 5`** (≈ 10 weeks) while frontend is iterating. Short
+     lease limits blast radius if the next deploy orphans this quilt. DO NOT
+     use `--epochs 53` / `--epochs max` unless you are publishing an
+     **archival frozen snapshot** (see "Planned dev/archival split")
+4. `site-builder sitemap <site_id>` — verify new resource → blob mapping
+5. `walrus --context mainnet list-blobs` — find any new OWNED blob object IDs
+6. For each NEW owned blob: `walrus --context mainnet share --blob-obj-id <id>`
    - Record the resulting shared object ID
-6. If any new blob got a lease < 53 epochs (e.g. site-builder SIGILL workaround):
-   `walrus --context mainnet extend --blob-obj-id <id> --epochs-extended <n>`
-   **BEFORE** sharing (extend must be done by the owner)
 7. Re-run `walrus list-blobs` — MUST be empty
-8. Update the table in this file with new shared object IDs + exp epochs
+8. Update the table in this file with new shared object IDs + exp epochs.
+   Move any newly-orphaned quilts to the "Superseded" list (do NOT try to
+   burn them — shared blobs are unburnable)
 9. Commit and push — the table on `main` must match on-chain reality
+
+## Planned dev/archival split (not yet implemented)
+
+**Status:** concept, pending decision. Not deployed yet.
+
+The current single-site model mixes two incompatible concerns:
+
+| Concern | Lease needs | Update frequency | Public funding? |
+|---|---|---|---|
+| **Working site** (active frontend) | Short (5–10 epochs) | Frequent | ❌ No — would orphan funds |
+| **Archival site** (frozen snapshot) | Max (53 epochs + extend) | Never | ✅ Yes — funds are safe |
+
+Proposed split:
+1. Keep `0x050df98f...` as the **working site** — short lease, no public
+   funding advertised, frequent updates allowed
+2. Publish a **separate archival site object** once we have a canonical
+   "v1.0 launch" snapshot we commit never to update — fund to max, open to
+   public funding, point a *different* SuiNS name at it (e.g.
+   `darbitex-archive.wal.app`)
+3. Main brand SuiNS continues pointing at the working site; archival exists
+   as parallel permanent mirror
+
+**Do not publish the archival site until:**
+- Frontend is feature-complete for a release we commit to freezing
+- Quilt-reuse behavior across `site-builder update` is understood well
+  enough to guarantee the archival quilts will not be touched
 
 ## Destructive-op safety rules
 
