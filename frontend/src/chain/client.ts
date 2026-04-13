@@ -54,7 +54,7 @@ export const aptos = aptosClients[0];
 // a provider-side or transport problem rather than a legitimate Move abort.
 // Move aborts are deterministic across providers, so retrying them just
 // wastes latency — we throw those immediately.
-function isTransientError(err: unknown): boolean {
+export function isTransientError(err: unknown): boolean {
   const asErr = err as { name?: string; message?: string };
   const msg = String(asErr?.message ?? err).toLowerCase();
   // Browser fetch API throws TypeError("Failed to fetch") for any network,

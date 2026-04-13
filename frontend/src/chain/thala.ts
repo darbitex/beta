@@ -115,7 +115,7 @@ export async function quoteThala(
     const res = await viewFn<[Record<string, unknown>]>(
       fn,
       [],
-      [pool.addr, metaIn, metaOut, amountInRaw.toString(), { vec: [] }],
+      [pool.addr, metaIn, amountInRaw.toString(), metaOut, { vec: [] }],
       THALA_PACKAGE,
     );
     const preview = res[0] as { amount_out?: string | number } | undefined;

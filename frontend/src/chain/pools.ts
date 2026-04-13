@@ -1,5 +1,5 @@
 import type { TokenConfig } from "../config";
-import { metaEq, viewFn } from "./client";
+import { isTransientError, metaEq, viewFn } from "./client";
 import { logError, logInfo, logWarn } from "./logger";
 import { getTokenInfo } from "./tokens";
 
@@ -89,7 +89,20 @@ export async function loadPools(): Promise<Pool[]> {
   const pools: Pool[] = [];
   let anyDropped = false;
   for (const addr of addrs) {
-    const loaded = await loadSinglePool(addr);
+    let loaded: Pool | null = null;
+    try {
+      loaded = await loadSinglePool(addr);
+    } catch (e) {
+      // Transient RPC failure exhausted all providers. Don't drop the pool —
+      // serve stale cache if we have one, otherwise bail with what we have.
+      logWarn("pools", `transient failure loading ${addr}, aborting cold load`);
+      const stale = readCache();
+      if (stale && stale.length > 0) {
+        logWarn("pools", `returning stale cache (${stale.length} pools) after transient failure`);
+        return stale;
+      }
+      return pools;
+    }
     if (loaded) {
       pools.push(loaded);
     } else {
@@ -138,6 +151,10 @@ async function loadSinglePool(addr: string): Promise<Pool | null> {
       hook_nft_2: String(hooks[1]),
     };
   } catch (e) {
+    if (isTransientError(e)) {
+      logWarn("pools", `transient RPC failure for ${addr}`);
+      throw e;
+    }
     logError("pools", `loadSinglePool failed for ${addr}`, e);
     return null;
   }
