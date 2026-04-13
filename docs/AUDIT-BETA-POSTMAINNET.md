@@ -742,11 +742,121 @@ The Darbitex Beta codebase is **secure, well-architected, and production-ready**
 
 ---
 
-## Pending auditors (post-mainnet cycle)
+## Round 8 (post-mainnet) — DeepSeek
 
-Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
+**Auditor:** DeepSeek
+**Date:** 2026-04-13
+**Verdict:** ✅ Recommended for deployment — 0 HIGH / 3 MEDIUM / 3 LOW / 3 INFO
 
-- DeepSeek — pending
-- Others TBD
+### Executive summary (verbatim)
 
-Consolidated triage, false-positive rebuttals, and fix commits will be batched at the end of the cycle — not per-auditor.
+The code demonstrates a strong understanding of Move and the Aptos object model. The most critical vulnerability identified in prior audits (double-counting of LP fees leading to insolvency) has been correctly mitigated in the current version. **No new Critical or High severity issues were found.** We did identify several Medium and Low issues, primarily related to economic edge cases, rounding behavior, and minor implementation quirks.
+
+### Findings summary
+
+| ID | Title | Severity | Status |
+|----|-------|----------|--------|
+| M-01 | Flash loan fee can be smaller than `EXTRA_FEE_DENOM` portion, causing hook fee miscalculation | Medium | Requires fix |
+| M-02 | `get_amount_out` may return zero for very small input amounts | Medium | Acceptable risk |
+| M-03 | First depositor can set extreme initial ratio, causing loss for subsequent LPs | Medium | Acknowledged |
+| L-01 | `add_liquidity` may mint zero shares due to rounding | Low | Mitigated |
+| L-02 | `claim_hook_fees` does not check `slot` bounds | Low | Redundant |
+| L-03 | `flash_repay` strict equality may cause unnecessary reverts | Low | Design choice |
+| I-01 | TWAP accumulator can be manipulated via flash loans | Informational | Known |
+| I-02 | `pending_from_accumulator` can underflow in extreme scenarios | Informational | Safe |
+| I-03 | Unused `E_SYMMETRIC_REQUIRED` error code | Informational | Cleanup |
+
+### MEDIUM findings
+
+#### M-01 — Flash loan fee naming / comment mismatch
+
+**Location:** `pool::flash_repay`
+
+```move
+let extra_fee_raw = amount / EXTRA_FEE_DENOM;
+let extra_fee = if (extra_fee_raw == 0) { 1 } else { extra_fee_raw };
+let extra_fee = if (extra_fee > fee) { fee } else { extra_fee };
+```
+
+For small flash borrows where `fee < extra_fee_raw`, `extra_fee` is capped to `fee`, meaning the entire flash fee goes to hook buckets and LP portion becomes zero. This is intentional and matches the swap path, but the variable naming `extra_fee` (meaning "hook portion") can mislead readers into thinking it should always be strictly less than `fee`.
+
+**Impact:** No direct security impact; fee accounting remains correct. Confusion could cause a regression on future refactor.
+
+**Recommendation:** Rename `extra_fee` to `hook_fee_portion` and clarify in comments that it may equal the entire flash fee for small borrows.
+
+#### M-02 — `get_amount_out` may return zero for very small input
+
+**Location:** `pool::get_amount_out`
+
+Due to integer division and the fee wedge, very small `amount_in` values yield `0`. Mathematically correct but can mislead off-chain integrators. Front-ends might display zero output, causing users to submit swaps with `min_out = 0` that then abort in `swap` (because `amount_out == 0` triggers `E_INSUFFICIENT_LIQUIDITY`).
+
+**Impact:** UX/off-chain issue, not on-chain vulnerability.
+
+**Recommendation:** Document that `get_amount_out` may return zero for dust amounts, or return `option::none()` in such cases.
+
+#### M-03 — First depositor can set extreme initial ratio
+
+**Location:** `pool::create_pool`
+
+The first LP (pool creator) can freely choose `amount_a` and `amount_b`. Mispricing loss is absorbed by the creator via arbitrage; subsequent LPs are protected by `add_liquidity`'s optimal-amount path. Standard Uniswap V2 property.
+
+**Impact:** No direct exploit; economic risk for early LPs who misprice.
+
+**Recommendation:** Front-end guidance to pool creators. No code change requested.
+
+### LOW findings
+
+#### L-01 — `add_liquidity` may mint zero shares due to rounding
+
+For very small `amount_a`/`amount_b` relative to reserves, both `lp_a` and `lp_b` can round to 0, aborting with `E_ZERO_AMOUNT`. Acceptable — prevents dust attacks. No action required.
+
+#### L-02 — `claim_hook_fees` does not check `slot` bounds
+
+The function branches on `slot == 0` vs `else`. If a malicious `HookNFT` with `slot ∉ {0, 1}` existed, the `else` branch would claim from slot 1 buckets. Not exploitable today (only slots 0 and 1 are minted by factory).
+
+**Recommendation:** Defense-in-depth — assert `slot == 0 || slot == 1`, or match both explicitly with abort for unexpected slots.
+
+#### L-03 — `flash_repay` strict equality may cause unnecessary reverts
+
+Exact `==` repayment check prevents surplus donation but causes 1-unit-off miscalculations to abort. Design choice per pre-mainnet R1 LOW-2 rationale. Consider `>=` with excess return, or keep as-is with clear docs.
+
+### INFORMATIONAL findings
+
+#### I-01 — TWAP accumulator can be manipulated via flash loans
+
+`update_twap` uses current reserves. A flash loan can temporarily skew reserves and influence TWAP contribution for that block. Known V2 oracle limitation; mitigated by sufficiently long averaging windows.
+
+**Recommendation:** Document single-block manipulation susceptibility.
+
+#### I-02 — `pending_from_accumulator` underflow guard verified
+
+The `if (per_share_current <= per_share_debt) return 0;` guard safely avoids underflow, and u256 intermediates prevent overflow. No action needed.
+
+#### I-03 — Unused `E_SYMMETRIC_REQUIRED` error code
+
+Error code slot 9 is reserved with a comment (`E_RESERVED_9`, was `E_SYMMETRIC_REQUIRED` in early drafts, removed during symmetric-seeding removal delta). Remove or repurpose in a future upgrade.
+
+### Conclusion (verbatim)
+
+The Darbitex Beta codebase is robust and has clearly benefited from multiple rounds of auditing. The critical double-counting bug has been fixed, and the current implementation adheres to best practices for Move development on Aptos. The findings above are either edge cases or informational notes that do not pose immediate security threats. With minor clarifications (M-01) and documentation updates, the protocol is ready for mainnet operation.
+
+**Final Verdict:** ✅ **Recommended for deployment with noted caveats.**
+
+---
+
+## Cycle status: 🟢 COLLECTING COMPLETE
+
+All 8 scheduled post-mainnet auditors have returned:
+
+| Auditor | Verdict | Git author |
+|---|---|---|
+| Claude Opus 4.6 (fresh web, extended) | 🟡 YELLOW (3 MED / 4 LOW / 6 INFO) | `claude` |
+| Kimi K2 | ✅ Conditional approval (1 MED / 1 LOW / 1 INFO) | `kimi` |
+| Grok 4 | 🟢 GREEN (0 MED / 3 LOW / 4 INFO) | `grok` |
+| Claude Opus 4.6 (in-session self-audit) | 🟡 YELLOW (3 LOW / 3 INFO + triage) | `darbitex` |
+| Gemini 2.5 Pro | 🟡 YELLOW (0 MED / 1 LOW / 2 INFO) | `gemini` |
+| ChatGPT (GPT-5) | 🟠 B+ (2 HIGH / 4 MED / 3 LOW — 2 FPs) | `chatgpt` |
+| Qwen | 🟢 LOW overall (0 MED / 1 LOW / 2 INFO) | `qwen` |
+| DeepSeek | ✅ Recommended (0 HIGH / 3 MED / 3 LOW / 3 INFO) | `deepseek` |
+
+Next phase: consolidated triage + fix batch. See `darbitex_beta_mainnet_audit.md` memory for running cross-auditor tally and in-session disposition notes on each finding.
