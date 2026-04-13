@@ -300,13 +300,98 @@ const EXTRA_FEE_DENOM: u64 = 100_000;
 
 ---
 
+## Round 3 (post-mainnet) — Grok 4
+
+**Auditor:** Grok 4 (xAI)
+**Date:** 2026-04-13
+**Verdict:** 🟢 GREEN — 0 CRITICAL / 0 HIGH / 0 MEDIUM / 3 LOW / 4 INFO
+**Security rating:** 8.7/10
+
+### Executive summary (verbatim)
+
+**Security Rating: HIGH (8.7/10)**
+**Mainnet Readiness: YES — with only minor/low recommendations**
+
+The codebase is **excellent** for an Aptos constant-product AMM. It is clean, heavily tested, and already incorporates fixes for previous high/medium findings (explicitly referenced in the tests). Architecture is modular, uses best-practice Aptos patterns, and has strong defense-in-depth.
+
+**Strengths**
+- Deterministic canonical pools (no duplicate-pool risk)
+- Excellent reentrancy protection (`locked` flag)
+- Proper reserve vs. accumulator separation (fixes the HIGH-1 LP-fee double-counting bug)
+- Flash-loan accounting is now correct (no reserve inflation)
+- Per-hop slippage in router (addresses MEV sandwich risk)
+- Soulbound HookNFT #1 + escrowed HookNFT #2 revenue mechanism
+- u256 math everywhere critical paths could overflow
+- Extremely thorough test suite (including regression tests for past audit issues)
+
+### Severity summary
+
+| Severity | Count | Summary |
+|----------|-------|--------|
+| **Critical** | 0 | None |
+| **High** | 0 | None |
+| **Medium** | 0 | None (all previous MEDIUMs fixed) |
+| **Low** | 3 | Minor improvements |
+| **Info** | 4 | Non-security notes |
+
+### LOW findings
+
+#### L-1 — Minor gas optimization in `accrue_fee` (pool.move)
+
+The line `let lp_portion = if (total_fee > extra_fee) { total_fee - extra_fee } else { 0 };` is correct but can be simplified to `let lp_portion = total_fee.saturating_sub(extra_fee);` (using `u64::saturating_sub`). Current code is safe and readable. Not a bug.
+
+#### L-2 — Timestamp manipulation surface (router + pool)
+
+`swap_with_deadline`, `update_twap`, etc. rely on `timestamp::now_seconds()`. Aptos timestamps are not perfectly manipulable (validators have ~1–2 s leeway), but very large deadlines or TWAP windows could theoretically be gamed by a validator cartel.
+
+**Recommendation:** Document that users should use reasonable deadlines (e.g., 15–60 minutes). Not exploitable in practice.
+
+#### L-3 — No emergency pause / kill-switch
+
+There is no global pause or admin emergency withdraw. In a catastrophic bug (e.g., future Aptos framework change), funds would be stuck until upgrade.
+
+**Recommendation (optional):** Add a `paused: bool` flag + `emergency_withdraw` (only callable by multisig) to the Factory. Many production DEXes have this.
+
+### INFORMATIONAL findings
+
+#### I-1 — Excellent event coverage
+Every state-changing function emits a rich event. Great for indexers/dashboards.
+
+#### I-2 — Schema version fields
+All structs have `schema_version: u8` and `_reserved: vector<u8>`. Forward-compatible upgrade pattern done correctly.
+
+#### I-3 — Admin / Treasury addresses are hardcoded
+Correct for mainnet (multisig addresses). No risk, but make sure the 3-of-5 and 2-of-3 multisigs are live and properly governed.
+
+#### I-4 — Tests are outstanding
+Regression tests for the exact HIGH-1 bug that was fixed. Coverage of same-pool abort, unsorted pairs, soulbound NFT transfer abort, flash-loan exact-repay, multi-hop, etc. The test suite alone would pass most auditors' checklist.
+
+### Architecture & best practices (verbatim)
+
+| Area | Status | Notes |
+|---|---|---|
+| Reentrancy | Protected | `locked` flag + `assert!(!pool.locked)` |
+| Invariant (x × y = k) | Preserved | Flash repay k-check + correct reserve accounting |
+| Overflow | Safe | u256 in all swap/LP math |
+| Access Control | Strict | Only `@darbitex` can init, only `ADMIN_ADDR` can set price |
+| Canonical pools | Perfect | Named-object + BCS-sorted metadata |
+| HookNFT revenue split | Correct | 50/50 split of extra_fee (0.001%) |
+| Flash loan accounting | Fixed | No reserve inflation (HIGH-1 fix) |
+| Multi-hop MEV protection | Strong | Per-hop `min_out` (audit MEDIUM-1 fixed) |
+| Primary store integration | Clean | Router entry functions are user-friendly |
+
+### Final verdict (verbatim)
+
+**This code is mainnet-ready.** It is one of the cleaner Aptos DEX implementations I have audited. The team clearly learned from previous audit rounds (the regression tests and comments prove it). No critical or high issues exist. **You can deploy with high confidence.**
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
 
 - Gemini 2.5 Pro — pending
 - DeepSeek — pending
-- Grok 4 — pending
 - Qwen — pending
 - ChatGPT (GPT-5) — pending
 - Others TBD
