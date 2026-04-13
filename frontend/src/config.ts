@@ -3,6 +3,11 @@ import { Network } from "@aptos-labs/ts-sdk";
 export const PACKAGE = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
 export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47";
 export const LIQUIDSWAP_ADAPTER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6ba13452184d794da4658a4814efd30";
+// ThalaSwap V2 — FA-native, zero generics, 3 pool types (weighted/stable/metastable).
+// No adapter satellite is needed because Thala's `preview_swap_exact_in_*` and
+// `swap_exact_in_*_entry` functions are callable directly via aptos.view and
+// standard entry tx with packageOverride. The integration is pure frontend.
+export const THALA_PACKAGE = "0x007730cd28ee1cdc9e999336cbc430f99e7c44397c0aa77516f6f23a78559bb5";
 
 // Public Aptos RPC pool — verified 2026-04-13 for chain_id=1 and POST /view.
 // Client rotates round-robin per request to spread load and improve resilience.
