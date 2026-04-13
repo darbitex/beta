@@ -2,6 +2,7 @@ import { Network } from "@aptos-labs/ts-sdk";
 
 export const PACKAGE = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
 export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47";
+export const LIQUIDSWAP_ADAPTER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6ba13452184d794da4658a4814efd30";
 
 // Public Aptos RPC pool — verified 2026-04-13 for chain_id=1 and POST /view.
 // Client rotates round-robin per request to spread load and improve resilience.
@@ -56,5 +57,12 @@ export const TOKENS: Record<string, TokenConfig> = {
     meta: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
     decimals: 6,
     symbol: "USDt",
+  },
+  lzUSDC: {
+    // Framework-paired canonical FA for the LayerZero USDC coin type.
+    meta: "0x2b3be0a97a73c87ff62cbdd36837a9fb5bbd1d7f06a73b7ed62ec15c5326c1b8",
+    decimals: 6,
+    symbol: "lzUSDC",
+    coinType: "0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDC",
   },
 };

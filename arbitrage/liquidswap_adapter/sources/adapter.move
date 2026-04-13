@@ -15,7 +15,7 @@ module liquidswap_adapter::darbitex_liquidswap {
     use aptos_framework::primary_fungible_store;
 
     use liquidswap::router_v2;
-    use liquidswap::curves::Stable;
+    use liquidswap::curves::{Stable, Uncorrelated};
 
     // ===== Errors =====
 
@@ -75,10 +75,34 @@ module liquidswap_adapter::darbitex_liquidswap {
         primary_fungible_store::deposit(caller_addr, fa_out);
     }
 
-    // ===== Composable primitive (Coin layer) =====
+    // ===== Generic uncorrelated swap (entry only) =====
 
-    /// Composable swap for callers that already have Coin<X>.
-    /// No signer needed — pure Coin in/out.
+    // Swap CoinX -> CoinY on LiquidSwap V0 uncorrelated curve.
+    // Mirror of swap_stable for non-correlated pairs (APT/USDC, etc).
+    public entry fun swap_uncorrelated<X, Y>(
+        caller: &signer,
+        metadata_in: Object<Metadata>,
+        amount_in: u64,
+        min_out: u64,
+    ) {
+        assert!(amount_in > 0, E_ZERO_AMOUNT);
+        let caller_addr = signer::address_of(caller);
+        let fa_in = primary_fungible_store::withdraw(caller, metadata_in, amount_in);
+        let coin_in = fa_to_coin<X>(caller, fa_in, metadata_in);
+        let coin_out = router_v2::swap_exact_coin_for_coin<X, Y, Uncorrelated>(
+            coin_in,
+            min_out,
+        );
+        let fa_out = coin_to_fa<Y>(coin_out);
+        let out_amount = fungible_asset::amount(&fa_out);
+        assert!(out_amount >= min_out, E_MIN_OUT);
+        primary_fungible_store::deposit(caller_addr, fa_out);
+    }
+
+    // ===== Composable primitives (Coin layer) =====
+
+    // Composable swap for callers that already have Coin<X>.
+    // No signer needed - pure Coin in/out.
     public fun swap_stable_coin<X, Y>(
         coin_in: Coin<X>,
         min_out: u64,
@@ -86,10 +110,35 @@ module liquidswap_adapter::darbitex_liquidswap {
         router_v2::swap_exact_coin_for_coin<X, Y, Stable>(coin_in, min_out)
     }
 
+    public fun swap_uncorrelated_coin<X, Y>(
+        coin_in: Coin<X>,
+        min_out: u64,
+    ): Coin<Y> {
+        router_v2::swap_exact_coin_for_coin<X, Y, Uncorrelated>(coin_in, min_out)
+    }
+
     // ===== Views =====
 
-    /// Quote: how much CoinY out for amount_in of CoinX on stable curve.
+    // Quote: how much CoinY out for amount_in of CoinX on stable curve.
     public fun get_amount_out_stable<X, Y>(amount_in: u64): u64 {
         router_v2::get_amount_out<X, Y, Stable>(amount_in)
+    }
+
+    public fun get_amount_out_uncorrelated<X, Y>(amount_in: u64): u64 {
+        router_v2::get_amount_out<X, Y, Uncorrelated>(amount_in)
+    }
+
+    // #[view]-annotated wrappers for cheap frontend queries. The frontend
+    // can call these directly via packageOverride=liquidswap_adapter without
+    // going through the (frozen) aggregator package.
+
+    #[view]
+    public fun quote_stable<X, Y>(amount_in: u64): u64 {
+        router_v2::get_amount_out<X, Y, Stable>(amount_in)
+    }
+
+    #[view]
+    public fun quote_uncorrelated<X, Y>(amount_in: u64): u64 {
+        router_v2::get_amount_out<X, Y, Uncorrelated>(amount_in)
     }
 }

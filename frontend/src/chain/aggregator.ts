@@ -1,8 +1,13 @@
-import { AGGREGATOR_PACKAGE, HYPERION_FEE_TIERS, type TokenConfig } from "../config";
+import {
+  AGGREGATOR_PACKAGE,
+  HYPERION_FEE_TIERS,
+  LIQUIDSWAP_ADAPTER_PACKAGE,
+  type TokenConfig,
+} from "../config";
 import { viewFn } from "./client";
 
 // Which venue a quote came from.
-export type Venue = "darbitex" | "hyperion" | "liquidswap_stable" | "cellana";
+export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana";
 
 export type Quote = {
   venue: Venue;
@@ -10,6 +15,7 @@ export type Quote = {
   darbitexPool?: string;
   hyperionPool?: string;
   liquidswapTypes?: [string, string]; // [inCoin, outCoin]
+  liquidswapCurve?: "stable" | "uncorrelated";
   cellanaIsStable?: boolean;
   amountOutRaw: bigint;
 };
@@ -17,7 +23,7 @@ export type Quote = {
 export type AggregatorResult = {
   darbitex: Quote | null;
   hyperion: Quote | null;
-  liquidswapStable: Quote | null;
+  liquidswap: Quote | null;
   cellana: Quote | null;
   best: Quote | null; // max amountOut across all venues
 };
@@ -196,27 +202,46 @@ async function bestCellanaQuote(
   };
 }
 
-async function quoteLiquidswapStable(
+// Direct call into liquidswap_adapter package (bypasses aggregator wrapper
+// because the aggregator package is frozen at 0.2.0 and doesn't know about
+// the Uncorrelated curve surface added in liquidswap_adapter 0.2.0).
+async function quoteLiquidswapCurve(
+  inCoinType: string,
+  outCoinType: string,
+  amountInRaw: bigint,
+  fn: "quote_stable" | "quote_uncorrelated",
+): Promise<bigint> {
+  try {
+    const res = await viewFn<[string | number]>(
+      `darbitex_liquidswap::${fn}`,
+      [inCoinType, outCoinType],
+      [amountInRaw.toString()],
+      LIQUIDSWAP_ADAPTER_PACKAGE,
+    );
+    return BigInt(String(res[0] ?? "0"));
+  } catch {
+    return 0n;
+  }
+}
+
+// Query both curves in parallel, pick the winner.
+async function bestLiquidswapQuote(
   inCoinType: string,
   outCoinType: string,
   amountInRaw: bigint,
 ): Promise<Quote | null> {
-  try {
-    const res = await agg<[string | number]>(
-      "quote_liquidswap_stable",
-      [inCoinType, outCoinType],
-      [amountInRaw.toString()],
-    );
-    const out = BigInt(String(res[0] ?? "0"));
-    if (out === 0n) return null;
-    return {
-      venue: "liquidswap_stable",
-      liquidswapTypes: [inCoinType, outCoinType],
-      amountOutRaw: out,
-    };
-  } catch {
-    return null;
-  }
+  const [stable, uncorrelated] = await Promise.all([
+    quoteLiquidswapCurve(inCoinType, outCoinType, amountInRaw, "quote_stable"),
+    quoteLiquidswapCurve(inCoinType, outCoinType, amountInRaw, "quote_uncorrelated"),
+  ]);
+  if (stable === 0n && uncorrelated === 0n) return null;
+  const useStable = stable >= uncorrelated;
+  return {
+    venue: "liquidswap",
+    liquidswapCurve: useStable ? "stable" : "uncorrelated",
+    liquidswapTypes: [inCoinType, outCoinType],
+    amountOutRaw: useStable ? stable : uncorrelated,
+  };
 }
 
 export async function aggregateQuotes(params: {
@@ -228,22 +253,22 @@ export async function aggregateQuotes(params: {
 }): Promise<AggregatorResult> {
   const { tokenIn, tokenOut, amountInRaw, darbitexPool, darbitexAToB } = params;
 
-  const [darbitex, hyperion, liquidswapStable, cellana] = await Promise.all([
+  const [darbitex, hyperion, liquidswap, cellana] = await Promise.all([
     darbitexPool
       ? quoteDarbitex(darbitexPool, amountInRaw, darbitexAToB)
       : Promise.resolve(null),
     bestHyperionQuote(tokenIn.meta, tokenOut.meta, amountInRaw),
     tokenIn.coinType && tokenOut.coinType
-      ? quoteLiquidswapStable(tokenIn.coinType, tokenOut.coinType, amountInRaw)
+      ? bestLiquidswapQuote(tokenIn.coinType, tokenOut.coinType, amountInRaw)
       : Promise.resolve(null),
     bestCellanaQuote(tokenIn.meta, tokenOut.meta, amountInRaw),
   ]);
 
   let best: Quote | null = null;
-  for (const q of [darbitex, hyperion, liquidswapStable, cellana]) {
+  for (const q of [darbitex, hyperion, liquidswap, cellana]) {
     if (!q) continue;
     if (!best || q.amountOutRaw > best.amountOutRaw) best = q;
   }
 
-  return { darbitex, hyperion, liquidswapStable, cellana, best };
+  return { darbitex, hyperion, liquidswap, cellana, best };
 }
