@@ -1,9 +1,14 @@
-import { TOKENS, type TokenConfig, RPC } from "../config";
-import { normMeta } from "./client";
+import { TOKENS, type TokenConfig } from "../config";
+import { normMeta, rotatedGetResource } from "./client";
 
 const TOKEN_CACHE: Record<string, TokenConfig> = {};
 
 for (const [, t] of Object.entries(TOKENS)) TOKEN_CACHE[normMeta(t.meta)] = t;
+
+type MetadataResource = {
+  symbol?: string;
+  decimals?: number | string;
+};
 
 export async function getTokenInfo(meta: string): Promise<TokenConfig> {
   const key = normMeta(meta);
@@ -11,13 +16,14 @@ export async function getTokenInfo(meta: string): Promise<TokenConfig> {
   if (cached) return cached;
 
   try {
-    const res = await fetch(`${RPC}/accounts/${meta}/resource/0x1::fungible_asset::Metadata`);
-    if (!res.ok) throw new Error("FA metadata 404");
-    const d = await res.json();
+    const d = await rotatedGetResource<MetadataResource>(
+      meta,
+      "0x1::fungible_asset::Metadata",
+    );
     const info: TokenConfig = {
       meta,
-      symbol: d.data?.symbol || `${meta.slice(0, 6)}...`,
-      decimals: Number.parseInt(d.data?.decimals ?? "0", 10) || 0,
+      symbol: d?.symbol || `${meta.slice(0, 6)}...`,
+      decimals: Number.parseInt(String(d?.decimals ?? "0"), 10) || 0,
     };
     TOKEN_CACHE[key] = info;
     return info;

@@ -64,7 +64,7 @@ Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0x595658d1c3f70c5859296ccd26291d7be44948eee9b30b271611dd36be9e483f` | `KPlwW7jm-688GYf_6ufAb5xsw4bYjw3q5fS5DMJlJZo` | 1.70 MiB | 33 | ~2026-06-29 | `/index.html`, `/assets/index-BklX5sga.js`, `/assets/index-D4oHF-9x.css`, `/favicon.svg`, `/manifest.json` |
+| 1 | `0xd227e1c00b283f3aab216a7b9310744427cc5a64d751ad80d90680270fea3018` | `GF7VKQ21zRXQX4F9-7a6kTqIXiYSt7TAyDhPh5W5v3c` | 1.70 MiB | 33 | ~2026-06-29 | `/index.html`, `/assets/index-ZLMvfIcp.js`, `/assets/index-D4oHF-9x.css`, `/favicon.svg`, `/manifest.json` |
 
 Short lease (epoch 33) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
 
@@ -75,6 +75,7 @@ Short lease (epoch 33) per the post-incident SOP — frontend still iterating, n
 - `0x4333ad3c58743371c675ec47f2d22ded9a95c89e3946b515fdc4b9c177f89150` (blob `07wfnaTbEb1L9Vj1I-cFyg7D7-V_zt4XEE_7mQlE2pU`) — full bundle from the 2026-04-13 balance/slippage deploy. **Not funded**, zero WAL loss.
 - `0x085861efa4660e4019509a7efe489d22a4280d05ab7b7b352581c576aff5529f` (blob `rBZ5UMvle5AOf349equlhXSnBWJ3Cra5N7mPbD1TiN8`) — full bundle from the 2026-04-13 aggregator mode deploy. **Not funded**, zero WAL loss.
 - `0x5cef144f2da6c74b9e55248e6dbd6499cb57d6fdeb9d87dd139cc1ca1209e2d7` (blob `Mivy_hUy-UZvkv33XMC3mNxhC-DxVQCKo5396ggbQtw`) — full bundle from the 2026-04-13 multi-RPC + debounce deploy. **Not funded**, zero WAL loss.
+- `0x595658d1c3f70c5859296ccd26291d7be44948eee9b30b271611dd36be9e483f` (blob `KPlwW7jm-688GYf_6ufAb5xsw4bYjw3q5fS5DMJlJZo`) — full bundle from the 2026-04-13 Cellana wire-up + token auto-detect deploy. **Not funded**, zero WAL loss.
 
 Site references blobs by content hash (blob ID), so the shared migration was
 zero-downtime and no site-object update was required.

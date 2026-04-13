@@ -45,13 +45,10 @@ function isTransientError(err: unknown): boolean {
   );
 }
 
-// Rotated view: build a try-order that puts non-cooling clients first,
-// cooling clients last (so they're still tried as a fallback if everyone
-// else has failed too). On transient error, mark cooldown and continue.
-// On non-transient error, throw immediately.
-export async function rotatedView<T extends MoveValue[] = MoveValue[]>(
-  payload: InputViewFunctionData,
-): Promise<T> {
+// Same try-order + cooldown pattern as rotatedView, but for the shared
+// client pick loop. Factored out so rotatedView and rotatedGetResource
+// share the same rotation state and failover semantics.
+function buildTryOrder(): number[] {
   const now = Date.now();
   const available: number[] = [];
   const cooling: number[] = [];
@@ -61,8 +58,43 @@ export async function rotatedView<T extends MoveValue[] = MoveValue[]>(
     else cooling.push(idx);
   }
   rpcCursor = (rpcCursor + 1) % aptosClients.length;
+  return [...available, ...cooling];
+}
 
-  const tryOrder = [...available, ...cooling];
+// Rotated account-resource read. Used for things like FA metadata lookups
+// that the aptos SDK exposes via getAccountResource rather than view.
+export async function rotatedGetResource<T>(
+  accountAddress: string,
+  resourceType: string,
+): Promise<T> {
+  const tryOrder = buildTryOrder();
+  let lastErr: unknown = null;
+  for (const idx of tryOrder) {
+    try {
+      return (await aptosClients[idx].getAccountResource({
+        accountAddress,
+        resourceType: resourceType as `${string}::${string}::${string}`,
+      })) as T;
+    } catch (e) {
+      if (isTransientError(e)) {
+        cooldownUntil[idx] = Date.now() + COOLDOWN_MS;
+        lastErr = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr ?? new Error("All RPC providers failed");
+}
+
+// Rotated view: build a try-order that puts non-cooling clients first,
+// cooling clients last (so they're still tried as a fallback if everyone
+// else has failed too). On transient error, mark cooldown and continue.
+// On non-transient error, throw immediately.
+export async function rotatedView<T extends MoveValue[] = MoveValue[]>(
+  payload: InputViewFunctionData,
+): Promise<T> {
+  const tryOrder = buildTryOrder();
   let lastErr: unknown = null;
   for (const idx of tryOrder) {
     try {
