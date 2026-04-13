@@ -1,5 +1,7 @@
 contracts/build/
 contracts/.aptos/
+satellites/*/build/
+satellites/*/.aptos/
 .DS_Store
 *.swp
 *.swo
