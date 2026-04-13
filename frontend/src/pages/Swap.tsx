@@ -1,22 +1,36 @@
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useEffect, useMemo, useState } from "react";
+import { aggregateQuotes, type AggregatorResult, type Quote, type Venue } from "../chain/aggregator";
 import { useFaBalance } from "../chain/balance";
-import { fromRaw, metaEq, toRaw, viewFn } from "../chain/client";
+import { fromRaw, metaEq, toRaw } from "../chain/client";
 import { findPool, loadPools, type Pool } from "../chain/pools";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
-import { TOKENS } from "../config";
+import { AGGREGATOR_PACKAGE, TOKENS } from "../config";
+
+type Mode = "swap" | "aggregator";
+
+const VENUE_LABEL: Record<Venue, string> = {
+  darbitex: "Darbitex",
+  hyperion: "Hyperion",
+  liquidswap_stable: "LiquidSwap",
+};
 
 export function SwapPage() {
   const toast = useToast();
   const { connected, signAndSubmitTransaction } = useWallet();
   const [slippage] = useSlippage();
+  const [mode, setMode] = useState<Mode>("swap");
   const [pools, setPools] = useState<Pool[]>([]);
   const [inSym, setInSym] = useState("APT");
   const [outSym, setOutSym] = useState("USDC");
   const [amount, setAmount] = useState("");
-  const [quote, setQuote] = useState<{ amountOut: number; pool: Pool } | null>(null);
+  const [darbitexPool, setDarbitexPool] = useState<Pool | null>(null);
+  const [darbitexAToB, setDarbitexAToB] = useState(true);
+  const [agg, setAgg] = useState<AggregatorResult | null>(null);
+  const [aggLoading, setAggLoading] = useState(false);
+  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -29,65 +43,150 @@ export function SwapPage() {
   const balIn = useFaBalance(tIn.meta, tIn.decimals);
   const balOut = useFaBalance(tOut.meta, tOut.decimals);
 
+  // Track darbitex pool context separately so both modes can use it.
+  useEffect(() => {
+    if (!pools.length || inSym === outSym) {
+      setDarbitexPool(null);
+      return;
+    }
+    const pool = findPool(pools, tIn.meta, tOut.meta);
+    if (!pool) {
+      setDarbitexPool(null);
+      return;
+    }
+    setDarbitexPool(pool);
+    setDarbitexAToB(metaEq(pool.meta_a, tIn.meta));
+  }, [pools, inSym, outSym, tIn, tOut]);
+
+  // Fetch quotes whenever inputs change.
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      if (!pools.length || !amountNum || amountNum <= 0 || inSym === outSym) {
-        setQuote(null);
+      if (!amountNum || amountNum <= 0 || inSym === outSym) {
+        setAgg(null);
+        setSelectedVenue(null);
         return;
       }
-      const pool = findPool(pools, tIn.meta, tOut.meta);
-      if (!pool) {
-        setQuote(null);
-        return;
-      }
+      const rawIn = toRaw(amountNum, tIn.decimals);
+      setAggLoading(true);
       try {
-        const rawIn = toRaw(amountNum, tIn.decimals);
-        const aToB = metaEq(pool.meta_a, tIn.meta);
-        const res = await viewFn<[string | number]>("pool::get_amount_out", [], [
-          pool.addr,
-          rawIn.toString(),
-          aToB,
-        ]);
-        const rawOut = Number(res[0] ?? 0);
-        if (!cancelled) setQuote({ amountOut: fromRaw(rawOut, tOut.decimals), pool });
+        const result = await aggregateQuotes({
+          tokenIn: tIn,
+          tokenOut: tOut,
+          amountInRaw: rawIn,
+          darbitexPool: darbitexPool?.addr ?? null,
+          darbitexAToB,
+        });
+        if (cancelled) return;
+        setAgg(result);
+        // Default selection: user's mode
+        if (mode === "swap") {
+          setSelectedVenue(result.darbitex ? "darbitex" : null);
+        } else {
+          setSelectedVenue(result.best?.venue ?? null);
+        }
       } catch (e) {
         if (!cancelled) {
           console.error(e);
-          setQuote(null);
+          setAgg(null);
+          setSelectedVenue(null);
         }
+      } finally {
+        if (!cancelled) setAggLoading(false);
       }
     }
     run();
     return () => {
       cancelled = true;
     };
-  }, [pools, amountNum, inSym, outSym, tIn, tOut]);
+  }, [amountNum, inSym, outSym, tIn, tOut, darbitexPool, darbitexAToB, mode]);
 
-  const disabled = !connected || !quote || busy;
+  const activeQuote: Quote | null = useMemo(() => {
+    if (!agg || !selectedVenue) return null;
+    if (selectedVenue === "darbitex") return agg.darbitex;
+    if (selectedVenue === "hyperion") return agg.hyperion;
+    return agg.liquidswapStable;
+  }, [agg, selectedVenue]);
+
+  const amountOutFormatted = activeQuote
+    ? fromRaw(activeQuote.amountOutRaw, tOut.decimals)
+    : 0;
+
+  const disabled = !connected || !activeQuote || busy;
   const btnLabel = useMemo(() => {
     if (!amountNum || amountNum <= 0) return "Enter amount";
     if (inSym === outSym) return "Select different tokens";
-    if (!quote) return "No pool";
+    if (aggLoading) return "Quoting...";
+    if (!activeQuote) return "No route";
     if (!connected) return "Connect wallet";
     if (busy) return "Submitting...";
-    return "Swap";
-  }, [amountNum, inSym, outSym, quote, connected, busy]);
+    return mode === "swap" ? "Swap" : `Swap via ${VENUE_LABEL[activeQuote.venue]}`;
+  }, [amountNum, inSym, outSym, activeQuote, connected, busy, aggLoading, mode]);
 
   async function doSwap() {
-    if (!quote) return;
+    if (!activeQuote) return;
     setBusy(true);
     try {
       const rawIn = toRaw(amountNum, tIn.decimals);
-      const minOut = toRaw(quote.amountOut * (1 - slippage), tOut.decimals);
+      const minOut = toRaw(amountOutFormatted * (1 - slippage), tOut.decimals);
       const deadline = Math.floor(Date.now() / 1000) + 120;
-      const tx = buildEntryTx("router", "swap_with_deadline", [
-        quote.pool.addr,
-        tIn.meta,
-        rawIn.toString(),
-        minOut.toString(),
-        deadline.toString(),
-      ]);
+
+      let tx;
+      if (activeQuote.venue === "darbitex") {
+        // Mode "swap" uses the core router directly (fewer hops, lower gas).
+        // Mode "aggregator" with darbitex winner uses aggregator::swap_darbitex
+        // so the namespace is consistent with the other venues.
+        if (mode === "swap") {
+          tx = buildEntryTx("router", "swap_with_deadline", [
+            activeQuote.darbitexPool!,
+            tIn.meta,
+            rawIn.toString(),
+            minOut.toString(),
+            deadline.toString(),
+          ]);
+        } else {
+          tx = buildEntryTx(
+            "aggregator",
+            "swap_darbitex",
+            [
+              activeQuote.darbitexPool!,
+              tIn.meta,
+              rawIn.toString(),
+              minOut.toString(),
+              deadline.toString(),
+            ],
+            [],
+            AGGREGATOR_PACKAGE,
+          );
+        }
+      } else if (activeQuote.venue === "hyperion") {
+        // Hyperion a_to_b: true iff input meta sorts before output meta lexicographically.
+        const aToB = tIn.meta.toLowerCase() < tOut.meta.toLowerCase();
+        tx = buildEntryTx(
+          "aggregator",
+          "swap_hyperion",
+          [
+            activeQuote.hyperionPool!,
+            tIn.meta,
+            aToB,
+            rawIn.toString(),
+            minOut.toString(),
+            deadline.toString(),
+          ],
+          [],
+          AGGREGATOR_PACKAGE,
+        );
+      } else {
+        // liquidswap_stable
+        tx = buildEntryTx(
+          "aggregator",
+          "swap_liquidswap_stable",
+          [tIn.meta, rawIn.toString(), minOut.toString(), deadline.toString()],
+          activeQuote.liquidswapTypes ?? [],
+          AGGREGATOR_PACKAGE,
+        );
+      }
+
       const resp = await signAndSubmitTransaction(tx);
       toast(`TX: ${String(resp.hash).slice(0, 12)}...`);
       setTimeout(() => {
@@ -112,9 +211,30 @@ export function SwapPage() {
     setOutSym(inSym);
   }
 
+  const rate = amountNum > 0 && activeQuote
+    ? amountOutFormatted / amountNum
+    : 0;
+
   return (
     <div className="container">
       <div className="card">
+        <div className="mode-tabs">
+          <button
+            type="button"
+            className={`mode-tab${mode === "swap" ? " active" : ""}`}
+            onClick={() => setMode("swap")}
+          >
+            Swap
+          </button>
+          <button
+            type="button"
+            className={`mode-tab${mode === "aggregator" ? " active" : ""}`}
+            onClick={() => setMode("aggregator")}
+          >
+            Aggregator
+          </button>
+        </div>
+
         <div className="swap-label-row">
           <span className="swap-label">You pay</span>
           {connected && (
@@ -159,7 +279,7 @@ export function SwapPage() {
             className="swap-input"
             type="number"
             placeholder="0.0"
-            value={quote ? quote.amountOut.toFixed(6) : ""}
+            value={activeQuote ? amountOutFormatted.toFixed(6) : ""}
             readOnly
           />
           <select
@@ -172,30 +292,66 @@ export function SwapPage() {
             ))}
           </select>
         </div>
-        {quote && (
+
+        {mode === "aggregator" && agg && (
+          <div className="venue-list">
+            <div className="venue-list-title">Routes</div>
+            <VenueRow
+              label="Darbitex"
+              quote={agg.darbitex}
+              decimals={tOut.decimals}
+              isBest={agg.best?.venue === "darbitex"}
+              selected={selectedVenue === "darbitex"}
+              onSelect={() => agg.darbitex && setSelectedVenue("darbitex")}
+            />
+            <VenueRow
+              label="Hyperion"
+              quote={agg.hyperion}
+              decimals={tOut.decimals}
+              isBest={agg.best?.venue === "hyperion"}
+              selected={selectedVenue === "hyperion"}
+              onSelect={() => agg.hyperion && setSelectedVenue("hyperion")}
+            />
+            <VenueRow
+              label="LiquidSwap"
+              quote={agg.liquidswapStable}
+              decimals={tOut.decimals}
+              isBest={agg.best?.venue === "liquidswap_stable"}
+              selected={selectedVenue === "liquidswap_stable"}
+              onSelect={() => agg.liquidswapStable && setSelectedVenue("liquidswap_stable")}
+            />
+            {agg.best && (
+              <div className="venue-row best-external">
+                <span className="venue-label">BEST EXTERNAL</span>
+                <span className="venue-amount">
+                  {fromRaw(agg.best.amountOutRaw, tOut.decimals).toFixed(6)} {outSym}
+                </span>
+                <span className="venue-tag">{VENUE_LABEL[agg.best.venue]}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeQuote && (
           <div className="swap-info">
+            <div>
+              <span>Route</span>
+              <span className="val">{VENUE_LABEL[activeQuote.venue]}</span>
+            </div>
             <div>
               <span>Rate</span>
               <span className="val">
-                1 {inSym} = {amountNum > 0 ? (quote.amountOut / amountNum).toFixed(6) : "—"} {outSym}
+                1 {inSym} = {rate > 0 ? rate.toFixed(6) : "—"} {outSym}
               </span>
-            </div>
-            <div>
-              <span>Fee</span>
-              <span className="val">0.01% (1 BPS)</span>
             </div>
             <div>
               <span>Slippage</span>
               <span className="val">{(slippage * 100).toFixed(slippage < 0.01 ? 2 : 1)}%</span>
             </div>
             <div>
-              <span>Pool</span>
-              <span className="val">{quote.pool.addr.slice(0, 10)}...</span>
-            </div>
-            <div>
               <span>Min received</span>
               <span className="val">
-                {(quote.amountOut * (1 - slippage)).toFixed(6)} {outSym}
+                {(amountOutFormatted * (1 - slippage)).toFixed(6)} {outSym}
               </span>
             </div>
           </div>
@@ -211,5 +367,38 @@ export function SwapPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+function VenueRow({
+  label,
+  quote,
+  decimals,
+  isBest,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  quote: Quote | null;
+  decimals: number;
+  isBest: boolean;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const available = quote !== null;
+  const amount = quote ? fromRaw(quote.amountOutRaw, decimals) : 0;
+  return (
+    <button
+      type="button"
+      className={`venue-row${selected ? " selected" : ""}${available ? "" : " unavailable"}`}
+      onClick={onSelect}
+      disabled={!available}
+    >
+      <span className="venue-label">{label}</span>
+      <span className="venue-amount">
+        {available ? amount.toFixed(6) : "—"}
+      </span>
+      {isBest && <span className="venue-tag best">BEST</span>}
+    </button>
   );
 }

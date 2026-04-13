@@ -7,9 +7,11 @@ export async function viewFn<T extends MoveValue[] = MoveValue[]>(
   fn: string,
   typeArguments: string[] = [],
   functionArguments: unknown[] = [],
+  packageOverride?: string,
 ): Promise<T> {
+  const pkg = packageOverride ?? PACKAGE;
   const payload: InputViewFunctionData = {
-    function: `${PACKAGE}::${fn}` as `${string}::${string}::${string}`,
+    function: `${pkg}::${fn}` as `${string}::${string}::${string}`,
     typeArguments,
     functionArguments: functionArguments as InputViewFunctionData["functionArguments"],
   };

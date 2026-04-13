@@ -275,6 +275,57 @@ a:hover { text-decoration: underline; }
 .slippage-apply:hover { background: #222; }
 .slippage-hint { font-size: 10px; color: #555; line-height: 1.4; }
 
+/* Mode tabs (Swap / Aggregator) */
+.mode-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  padding: 4px; background: #0a0a0a; border-radius: 10px;
+}
+.mode-tab {
+  flex: 1; padding: 10px; background: none; border: none;
+  color: #666; font-family: inherit; font-size: 12px;
+  font-weight: 600; cursor: pointer; border-radius: 8px;
+  transition: all 0.15s;
+}
+.mode-tab:hover { color: #aaa; }
+.mode-tab.active { background: #1a1a1a; color: #ff8800; }
+
+/* Venue list (aggregator mode) */
+.venue-list {
+  margin-top: 12px; padding: 12px; background: #0a0a0a;
+  border-radius: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.venue-list-title {
+  font-size: 10px; color: #555; text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 4px;
+}
+.venue-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 10px 12px; background: #111;
+  border: 1px solid #1a1a1a; border-radius: 8px;
+  color: #aaa; font-family: inherit; font-size: 12px;
+  cursor: pointer; transition: all 0.15s;
+}
+.venue-row:hover:not(:disabled) { border-color: #333; background: #141414; }
+.venue-row.selected {
+  border-color: #ff8800; background: #1a1208;
+}
+.venue-row.unavailable {
+  opacity: 0.4; cursor: not-allowed;
+}
+.venue-row.best-external {
+  background: #0d0805; border-color: #ff8800;
+  cursor: default; margin-top: 4px;
+}
+.venue-label { flex: 0 0 auto; color: #888; font-weight: 600; }
+.venue-row.selected .venue-label { color: #ff8800; }
+.venue-amount { flex: 1; text-align: right; color: #e0e0e0; font-variant-numeric: tabular-nums; }
+.venue-tag {
+  display: inline-block; padding: 2px 6px; border-radius: 4px;
+  font-size: 9px; letter-spacing: 0.5px;
+  background: #ff8800; color: #000; font-weight: 700;
+}
+.venue-tag.best { background: #ff8800; }
+
 /* Remove liquidity preview */
 .remove-preview {
   background: #0a0a0a; border-radius: 8px; padding: 12px; margin: 8px 0;

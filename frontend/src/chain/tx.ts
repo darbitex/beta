@@ -6,10 +6,12 @@ export function buildEntryTx(
   fn: string,
   functionArguments: unknown[],
   typeArguments: string[] = [],
+  packageOverride?: string,
 ): InputTransactionData {
+  const pkg = packageOverride ?? PACKAGE;
   return {
     data: {
-      function: `${PACKAGE}::${module}::${fn}` as `${string}::${string}::${string}`,
+      function: `${pkg}::${module}::${fn}` as `${string}::${string}::${string}`,
       typeArguments,
       functionArguments: functionArguments as never,
     },
