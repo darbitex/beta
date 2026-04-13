@@ -60,15 +60,16 @@ considered complete.
 
 ## Active shared quilts
 
-Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 days**).
+Last verified: **2026-04-14** (Walrus mainnet epoch **28**, epoch duration **14 days**).
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0xabedf95a39d9f66c9be059cfc169f28e1f678e72de07283c87c753d9add13cb2` | (see latest deploy) | 1.70 MiB | 33 | ~2026-06-29 | bundle `index-CM36zo2x.js` + CSS `index-CnUn-BJD.css` + index.html + favicon + manifest |
+| 1 | `0x3bf1eb1483390e82cbb2e00afe69fddb8c7c2a0a94606ee17347f8a8d0a3186e` | `SfKgzCqgT0el4bO6TsRJ1nk8g4vYFTZIRiunWdtzZmU` | 1.70 MiB | 33 | ~2026-06-22 | bundle `index-BYfk1RoU.js` + CSS `index-BSEWc_rh.css` + index.html + favicon + manifest |
 
 Short lease (epoch 33) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
 
 **Superseded shared quilts (orphaned, not funded, left to expire naturally — shared blobs cannot be burned):**
+- `0xabedf95a39d9f66c9be059cfc169f28e1f678e72de07283c87c753d9add13cb2` (blob `KEtii76gWXE9KyhkN2hwQDXQEvGjS7N9EazheqIcnuQ`) — full bundle from the 2026-04-13 Thala-venue deploy (`index-CdA4OOgP.js` + `index-DkpC2sT9.css`). **Not funded**, zero WAL loss.
 - `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` (blob `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U`) — formerly `/index.html` + old JS. **Locked ~3.229 WAL in the pool.** Expiry epoch 81 (~2028-04-18).
 - `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` (blob `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI`) — formerly CSS + favicon + manifest. **Locked ~3.229 WAL in the pool.** Expiry epoch 81 (~2028-04-18).
 - `0x64eb452541d150191d46c0522edc3072509875c543d86779475613d7828e1f46` (blob `LIa6r1DiE6ZmWKmygE2gzdCoO-P4V-_JulZxFZx4LcM`) — full bundle from the 2026-04-13 Treasury 3/5 deploy. **Not funded**, zero WAL loss.
