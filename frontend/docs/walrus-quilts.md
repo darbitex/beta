@@ -46,19 +46,56 @@ Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 
 Site references blobs by content hash (blob ID), so the shared migration was
 zero-downtime and no site-object update was required.
 
-## How anyone can fund-extend these quilts
+## Public funding & extension
 
-Community members / users can extend the lease on any shared blob above using:
+Anyone — community members, users, bots — can keep these quilts alive without
+access to the operational wallet. The flow is **two separate operations**:
+
+### Step 1 — Fund the shared blob (add WAL to its internal pool)
 
 ```bash
 walrus --context mainnet fund-shared-blob \
     --shared-blob-obj-id <SHARED_OBJECT_ID_FROM_TABLE> \
+    --amount <FROST>
+```
+
+`--amount` is in FROST (1 WAL = 1_000_000_000 FROST). This deposits WAL into
+the `SharedBlob` object's internal balance. It does NOT extend the lease yet —
+it only top-ups the pool.
+
+### Step 2 — Trigger the extension (consumes from the pool)
+
+```bash
+walrus --context mainnet extend \
+    --shared \
+    --blob-obj-id <SHARED_OBJECT_ID_FROM_TABLE> \
     --epochs-extended <N>
 ```
 
-The operational wallet does not need to sign. Cost: ~0.0015 WAL per epoch per
-blob (at ≤16 MiB tier). Max extension is capped by Walrus `max_epochs_ahead`
-(currently 53 epochs / ~2 years from current epoch).
+Anyone can call this. The cost is paid from the SharedBlob's internal pool
+(funded in Step 1), not from the caller's wallet. Extension is capped by
+Walrus `max_epochs_ahead` (currently 53 epochs / ~2 years).
+
+### Pricing reference
+
+- Tier ≤16 MiB unencoded = **0.0015 WAL / epoch** (both quilts fall in this tier)
+- Both quilts fully funded 2026-04-13 with 3.229 WAL each (= 6.458 WAL total,
+  the entire operational wallet WAL balance). At 0.0015 WAL per epoch, that
+  is ~2150 epochs of runway per quilt, far exceeding any practical horizon
+  (Walrus protocol caps lease extensions at 53 epochs ahead, so most of the
+  pool sits idle as future headroom)
+- Any community top-ups further extend the runway
+
+### When to trigger extend
+
+Both blobs are currently at epoch 81 (max). Extension calls will start
+succeeding once the Walrus network's current epoch advances and
+`current_epoch + 53 > 81`. Until then, extend calls will either no-op or
+error because the blob is already at the max-future ceiling.
+
+After every epoch tick (every 14 days), anyone can run Step 2 with
+`--epochs-extended 1` to keep the blob pinned at the ceiling. Automation
+via a cron / public script is the intended long-term pattern.
 
 ## How to verify on-chain state
 
