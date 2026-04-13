@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { aptos, fromRaw } from "./client";
+import { fromRaw, rotatedView } from "./client";
 import { useAddress } from "../wallet/useConnect";
 
 export async function fetchFaBalance(owner: string, metadata: string): Promise<bigint> {
   try {
-    const res = await aptos.view({
-      payload: {
-        function: "0x1::primary_fungible_store::balance",
-        typeArguments: ["0x1::fungible_asset::Metadata"],
-        functionArguments: [owner, metadata],
-      },
+    const res = await rotatedView<[string | number]>({
+      function: "0x1::primary_fungible_store::balance",
+      typeArguments: ["0x1::fungible_asset::Metadata"],
+      functionArguments: [owner, metadata],
     });
     return BigInt(String(res[0] ?? "0"));
   } catch {

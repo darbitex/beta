@@ -2,9 +2,29 @@ import { Network } from "@aptos-labs/ts-sdk";
 
 export const PACKAGE = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
 export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47";
-export const RPC = "https://fullnode.mainnet.aptoslabs.com/v1";
+
+// Public Aptos RPC pool — verified 2026-04-13 for chain_id=1 and POST /view.
+// Client rotates round-robin per request to spread load and improve resilience.
+// All endpoints are free, unauthenticated, and per-IP rate-limited on the
+// caller side (preserves the decentralized "each user brings own budget"
+// model — no shared paid quota).
+export const RPC_LIST: string[] = [
+  "https://fullnode.mainnet.aptoslabs.com/v1",
+  "https://api.mainnet.aptoslabs.com/v1",
+  "https://aptos-api.polkachu.com/v1",
+];
+
+// Legacy single-RPC export; points to the first entry. Some consumers may
+// still import this directly. Prefer RPC_LIST + rotation for new code.
+export const RPC = RPC_LIST[0];
+
 export const NETWORK = Network.MAINNET;
 export const SLIPPAGE = 0.005;
+
+// Aggregator quote debounce (ms). Waits this long after input stops changing
+// before firing the parallel view calls. Tuned to not exceed the per-IP budget
+// on a sustained-typing user even at the extreme case.
+export const QUOTE_DEBOUNCE_MS = 800;
 
 // Hyperion CLMM fee tiers (u8 enum). All six valid mainnet values.
 // Frontend enumerates these to find the best-liquidity pool for a pair.

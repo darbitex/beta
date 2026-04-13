@@ -7,7 +7,7 @@ import { findPool, loadPools, type Pool } from "../chain/pools";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
-import { AGGREGATOR_PACKAGE, TOKENS } from "../config";
+import { AGGREGATOR_PACKAGE, QUOTE_DEBOUNCE_MS, TOKENS } from "../config";
 
 type Mode = "swap" | "aggregator";
 
@@ -58,17 +58,21 @@ export function SwapPage() {
     setDarbitexAToB(metaEq(pool.meta_a, tIn.meta));
   }, [pools, inSym, outSym, tIn, tOut]);
 
-  // Fetch quotes whenever inputs change.
+  // Fetch quotes whenever inputs change. Debounced so rapid typing doesn't
+  // burst the RPC pool — only the last stable input within the debounce window
+  // actually fires view calls.
   useEffect(() => {
+    if (!amountNum || amountNum <= 0 || inSym === outSym) {
+      setAgg(null);
+      setSelectedVenue(null);
+      setAggLoading(false);
+      return;
+    }
     let cancelled = false;
-    async function run() {
-      if (!amountNum || amountNum <= 0 || inSym === outSym) {
-        setAgg(null);
-        setSelectedVenue(null);
-        return;
-      }
+    setAggLoading(true);
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
       const rawIn = toRaw(amountNum, tIn.decimals);
-      setAggLoading(true);
       try {
         const result = await aggregateQuotes({
           tokenIn: tIn,
@@ -79,7 +83,6 @@ export function SwapPage() {
         });
         if (cancelled) return;
         setAgg(result);
-        // Default selection: user's mode
         if (mode === "swap") {
           setSelectedVenue(result.darbitex ? "darbitex" : null);
         } else {
@@ -94,10 +97,10 @@ export function SwapPage() {
       } finally {
         if (!cancelled) setAggLoading(false);
       }
-    }
-    run();
+    }, QUOTE_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [amountNum, inSym, outSym, tIn, tOut, darbitexPool, darbitexAToB, mode]);
 
