@@ -7,10 +7,9 @@ import {
 import { viewFn } from "./client";
 import { logError } from "./logger";
 import type { Route } from "./pools";
-import { findThalaPool, quoteThala, type ThalaPool, type ThalaPoolKind } from "./thala";
 
 // Which venue a quote came from.
-export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana" | "thala";
+export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana";
 
 export type Quote = {
   venue: Venue;
@@ -20,8 +19,6 @@ export type Quote = {
   liquidswapTypes?: [string, string]; // [inCoin, outCoin]
   liquidswapCurve?: "stable" | "uncorrelated";
   cellanaIsStable?: boolean;
-  thalaPool?: string;
-  thalaKind?: ThalaPoolKind;
   amountOutRaw: bigint;
   // Per-hop outputs, for 2-hop quotes. Used to derive tight per-hop
   // min_out floors at execute time.
@@ -33,7 +30,6 @@ export type AggregatorResult = {
   hyperion: Quote | null;
   liquidswap: Quote | null;
   cellana: Quote | null;
-  thala: Quote | null;
   best: Quote | null; // max amountOut across all venues
 };
 
@@ -275,34 +271,15 @@ async function bestLiquidswapQuote(
   };
 }
 
-async function thalaQuoteFor(
-  pools: ThalaPool[],
-  metaIn: string,
-  metaOut: string,
-  amountInRaw: bigint,
-): Promise<Quote | null> {
-  const pool = findThalaPool(pools, metaIn, metaOut);
-  if (!pool) return null;
-  const out = await quoteThala(pool, metaIn, metaOut, amountInRaw);
-  if (out === 0n) return null;
-  return {
-    venue: "thala",
-    thalaPool: pool.addr,
-    thalaKind: pool.kind,
-    amountOutRaw: out,
-  };
-}
-
 export async function aggregateQuotes(params: {
   tokenIn: TokenConfig;
   tokenOut: TokenConfig;
   amountInRaw: bigint;
   darbitexRoute: Route | null;
-  thalaPools: ThalaPool[];
 }): Promise<AggregatorResult> {
-  const { tokenIn, tokenOut, amountInRaw, darbitexRoute, thalaPools } = params;
+  const { tokenIn, tokenOut, amountInRaw, darbitexRoute } = params;
 
-  const [darbitex, hyperion, liquidswap, cellana, thala] = await Promise.all([
+  const [darbitex, hyperion, liquidswap, cellana] = await Promise.all([
     darbitexRoute
       ? quoteDarbitexRoute(darbitexRoute, amountInRaw)
       : Promise.resolve(null),
@@ -311,16 +288,13 @@ export async function aggregateQuotes(params: {
       ? bestLiquidswapQuote(tokenIn.coinType, tokenOut.coinType, amountInRaw)
       : Promise.resolve(null),
     bestCellanaQuote(tokenIn.meta, tokenOut.meta, amountInRaw),
-    thalaPools.length > 0
-      ? thalaQuoteFor(thalaPools, tokenIn.meta, tokenOut.meta, amountInRaw)
-      : Promise.resolve(null),
   ]);
 
   let best: Quote | null = null;
-  for (const q of [darbitex, hyperion, liquidswap, cellana, thala]) {
+  for (const q of [darbitex, hyperion, liquidswap, cellana]) {
     if (!q) continue;
     if (!best || q.amountOutRaw > best.amountOutRaw) best = q;
   }
 
-  return { darbitex, hyperion, liquidswap, cellana, thala, best };
+  return { darbitex, hyperion, liquidswap, cellana, best };
 }

@@ -4,7 +4,6 @@ import { aggregateQuotes, type AggregatorResult, type Quote, type Venue } from "
 import { useFaBalance } from "../chain/balance";
 import { fromRaw, metaEq, normMeta, toRaw } from "../chain/client";
 import { findRoute, loadPools, type Pool, type Route } from "../chain/pools";
-import { loadThalaPools, thalaSwapEntryFn, type ThalaPool } from "../chain/thala";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
@@ -12,7 +11,6 @@ import {
   AGGREGATOR_PACKAGE,
   LIQUIDSWAP_ADAPTER_PACKAGE,
   QUOTE_DEBOUNCE_MS,
-  THALA_PACKAGE,
   TOKENS,
   type TokenConfig,
 } from "../config";
@@ -24,7 +22,6 @@ const VENUE_LABEL: Record<Venue, string> = {
   hyperion: "Hyperion",
   liquidswap: "LiquidSwap",
   cellana: "Cellana",
-  thala: "Thala",
 };
 
 // Build the token universe from (a) hardcoded TOKENS in config and (b) any
@@ -57,7 +54,6 @@ export function SwapPage() {
   const [slippage] = useSlippage();
   const [mode, setMode] = useState<Mode>("swap");
   const [pools, setPools] = useState<Pool[]>([]);
-  const [thalaPools, setThalaPools] = useState<ThalaPool[]>([]);
   const [inMeta, setInMeta] = useState<string>(TOKENS.APT.meta);
   const [outMeta, setOutMeta] = useState<string>(TOKENS.USDC.meta);
   const [amount, setAmount] = useState("");
@@ -69,7 +65,6 @@ export function SwapPage() {
 
   useEffect(() => {
     loadPools().then(setPools).catch((e) => toast(`Load pools: ${String(e?.message ?? e)}`, true));
-    loadThalaPools().then(setThalaPools).catch(() => {});
   }, [toast]);
 
   // Token universe = hardcoded TOKENS + unique tokens from loaded pools.
@@ -120,7 +115,6 @@ export function SwapPage() {
           tokenOut: tOut,
           amountInRaw: rawIn,
           darbitexRoute,
-          thalaPools,
         });
         if (cancelled) return;
         setAgg(result);
@@ -143,15 +137,14 @@ export function SwapPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [amountNum, inMeta, outMeta, tIn, tOut, darbitexRoute, thalaPools, mode]);
+  }, [amountNum, inMeta, outMeta, tIn, tOut, darbitexRoute, mode]);
 
   const activeQuote: Quote | null = useMemo(() => {
     if (!agg || !selectedVenue) return null;
     if (selectedVenue === "darbitex") return agg.darbitex;
     if (selectedVenue === "hyperion") return agg.hyperion;
     if (selectedVenue === "liquidswap") return agg.liquidswap;
-    if (selectedVenue === "cellana") return agg.cellana;
-    return agg.thala;
+    return agg.cellana;
   }, [agg, selectedVenue]);
 
   const amountOutFormatted = activeQuote
@@ -238,7 +231,8 @@ export function SwapPage() {
           activeQuote.liquidswapTypes ?? [],
           LIQUIDSWAP_ADAPTER_PACKAGE,
         );
-      } else if (activeQuote.venue === "cellana") {
+      } else {
+        // cellana
         tx = buildEntryTx(
           "aggregator",
           "swap_cellana",
@@ -252,23 +246,6 @@ export function SwapPage() {
           ],
           [],
           AGGREGATOR_PACKAGE,
-        );
-      } else {
-        // thala — direct entry on ThalaSwapV2 package, no deadline
-        // (Thala's entry doesn't take one). Kind-specific function name.
-        const fn = thalaSwapEntryFn(activeQuote.thalaKind ?? "weighted");
-        tx = buildEntryTx(
-          "pool",
-          fn,
-          [
-            activeQuote.thalaPool!,
-            tIn.meta,
-            rawIn.toString(),
-            tOut.meta,
-            minOut.toString(),
-          ],
-          [],
-          THALA_PACKAGE,
         );
       }
 
@@ -429,16 +406,6 @@ export function SwapPage() {
               isBest={agg.best?.venue === "cellana"}
               selected={selectedVenue === "cellana"}
               onSelect={() => agg.cellana && setSelectedVenue("cellana")}
-            />
-            <VenueRow
-              label={
-                agg.thala?.thalaKind ? `Thala (${agg.thala.thalaKind})` : "Thala"
-              }
-              quote={agg.thala}
-              decimals={tOut.decimals}
-              isBest={agg.best?.venue === "thala"}
-              selected={selectedVenue === "thala"}
-              onSelect={() => agg.thala && setSelectedVenue("thala")}
             />
             {agg.best && (
               <div className="venue-row best-external">
