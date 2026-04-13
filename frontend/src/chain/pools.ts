@@ -87,12 +87,30 @@ export async function loadPools(): Promise<Pool[]> {
   }
 
   const pools: Pool[] = [];
+  let anyDropped = false;
   for (const addr of addrs) {
     const loaded = await loadSinglePool(addr);
-    if (loaded) pools.push(loaded);
-    else logWarn("pools", `pool dropped from universe: ${addr}`);
+    if (loaded) {
+      pools.push(loaded);
+    } else {
+      anyDropped = true;
+      logWarn("pools", `pool dropped from universe: ${addr}`);
+    }
   }
-  if (pools.length > 0) writeCache(pools);
+  // Only cache a COMPLETE load. A partial result should never be persisted,
+  // otherwise we'd serve a tainted cache back to the user on the next visit
+  // and they'd see a stale universe where some pools are permanently missing.
+  if (pools.length === addrs.length && pools.length > 0) {
+    writeCache(pools);
+  } else if (anyDropped) {
+    // If we have a previous stale cache that's MORE complete than the
+    // current partial load, prefer the stale one.
+    const stale = readCache();
+    if (stale && stale.length > pools.length) {
+      logWarn("pools", `partial load (${pools.length}/${addrs.length}), returning stale cache (${stale.length})`);
+      return stale;
+    }
+  }
   return pools;
 }
 

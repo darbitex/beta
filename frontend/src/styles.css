@@ -283,6 +283,7 @@ a:hover { text-decoration: underline; }
   letter-spacing: 0.5px; cursor: pointer;
 }
 .log-btn:hover { background: #222; color: #ff8800; }
+.slippage-btn.rpc-active { border-color: #ff8800; color: #ff8800; }
 
 /* Mode tabs (Swap / Aggregator) */
 .mode-tabs {

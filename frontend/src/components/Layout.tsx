@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { exportLogs } from "../chain/logger";
 import { PACKAGE } from "../config";
 import { ConnectButton } from "./ConnectButton";
+import { RpcOverrideButton } from "./RpcOverrideButton";
 import { SlippageButton } from "./SlippageButton";
 
 export function Layout() {
@@ -31,6 +32,7 @@ export function Layout() {
           >
             LOG
           </button>
+          <RpcOverrideButton />
           <SlippageButton />
           <ConnectButton />
         </div>
