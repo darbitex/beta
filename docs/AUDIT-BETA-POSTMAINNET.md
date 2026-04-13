@@ -386,6 +386,146 @@ Regression tests for the exact HIGH-1 bug that was fixed. Coverage of same-pool 
 
 ---
 
+## Round 4 (post-mainnet) — Claude Opus 4.6 (in-session self-audit)
+
+**Auditor:** Claude Opus 4.6 (Anthropic), same session as the developer who authored the code. Conflict-of-interest disclaimer: I wrote the code I'm reviewing. This is a sanity pass, not a substitute for external review.
+**Date:** 2026-04-13
+**Verdict:** 🟡 YELLOW — 0 HIGH / 0 MEDIUM / 3 LOW / 3 INFO, plus cross-auditor opinions on prior-round findings.
+
+### New findings (not yet flagged by other post-mainnet auditors)
+
+#### L-1 — Flash fee math uses u64 multiplication without u256 intermediates
+
+**Location:** `pool.move:973`
+
+```move
+let fee_raw = amount * FLASH_FEE_BPS / BPS_DENOM;
+```
+
+Unlike the swap path which wraps all intermediates in `u256` (`pool.move:543-546`), the flash borrow fee uses raw u64 multiplication. With `FLASH_FEE_BPS = 1` this cannot overflow today (`u64::MAX * 1 < u64::MAX`), but the inconsistency is a footgun: any future `FLASH_FEE_BPS` bump (say to 30 for 0.3%) combined with `amount` near `u64::MAX` would overflow. The swap-side discipline ("always u256 for fee intermediates") should apply uniformly.
+
+**Impact:** None at current constants. Defensive only.
+
+**Recommendation:** Mirror the swap pattern: `let fee_raw = (((amount as u256) * (FLASH_FEE_BPS as u256) / (BPS_DENOM as u256)) as u64);`.
+
+#### L-2 — `add_liquidity` optimal-amount cast can abort on pathologically skewed reserves
+
+**Location:** `pool.move:645-648`, `pool.move:658-661`
+
+```move
+let amount_b_optimal = (
+    ((amount_a_desired as u256) * (pool.reserve_b as u256)
+        / (pool.reserve_a as u256)) as u64
+);
+```
+
+If a pool is created with an extreme ratio (e.g., `reserve_a=1`, `reserve_b=2^63` — permitted today as long as `sqrt(a*b) > MINIMUM_LIQUIDITY`), then large `amount_a_desired` values make the u256 intermediate exceed `u64::MAX`, and the final `as u64` cast aborts with Move's arithmetic error rather than `E_DISPROPORTIONAL`. The pool becomes effectively frozen for growth from one side.
+
+**Impact:** DoS on pathologically mis-seeded pools. Requires intentional bad seeding at create time (real APT/USDC-shaped pools are nowhere near this regime). No safety implication, only UX / frozen-pool risk for bad configs.
+
+**Recommendation:** Either clamp the u256 result to `u64::MAX` before casting and handle the abort with a clearer error, or add an explicit `assert!(amount_b_optimal_u256 <= u64::MAX, E_INSUFFICIENT_LIQUIDITY)` pre-cast.
+
+#### L-3 — `update_twap` not called in `claim_hook_fees` (cosmetic asymmetry)
+
+**Location:** `pool.move:880-938`
+
+`claim_lp_fees` calls `update_twap(pool)` (line 840); `claim_hook_fees` does not. Neither function mutates reserves, so the TWAP cumulative is semantically unaffected — the next reserve-mutating call will still accumulate the correct `reserve × dt` contribution spanning the claim. But the code is asymmetric for no reason; a reader glancing at the two functions would wonder whether the difference is load-bearing.
+
+**Impact:** None. Cosmetic only.
+
+**Recommendation:** Either add `update_twap(pool);` to `claim_hook_fees` for consistency, or remove it from `claim_lp_fees` (R2 self-audit noted it as redundant there — gas cost).
+
+### Informational
+
+#### I-1 — Hook split always rounds in favor of hook_2 (escrow slot)
+
+**Location:** `pool.move:254-255`
+
+```move
+let hook_1_portion = extra_fee * HOOK_SPLIT_PCT / 100;
+let hook_2_portion = extra_fee - hook_1_portion;
+```
+
+For `extra_fee = 1`: hook_1=0, hook_2=1. For `extra_fee = 3`: hook_1=1, hook_2=2. Odd `extra_fee` always gives the extra unit to hook_2 (escrow slot, tradable). Pre-mainnet R1 self-audit flagged this as "dust asymmetry" and accepted it. Re-noting for visibility: on dust-heavy flows the **treasury hook (slot 0) is under-compensated** relative to the tradable hook (slot 1). Dust-spray attacks therefore inflate the escrow slot's bucket, not the treasury's — which is a mild positive for treasury safety and a mild negative for treasury revenue.
+
+#### I-2 — `hook_listing_price` view aborts on unknown pool
+
+**Location:** `pool_factory.move:384-387`
+
+```move
+*table::borrow(&f.hook_listings, pool_addr)
+```
+
+Should be wrapped with `table::contains` check or return `Option<u64>`. Frontends calling this for a pool that has already been bought (listing removed) will get an abort instead of a clean "not listed" signal. UX-only nit for integrators.
+
+#### I-3 — `buy_hook` has no deadline parameter
+
+**Location:** `pool_factory.move:269-306`
+
+Price is locked at listing time, so no economic exposure from mempool delay. But a buyer who wants to cancel a stalled TX has no escape hatch. Unlike the router which gates every entry on a deadline, this one is unconditional. Extremely low severity; noting for completeness.
+
+### Cross-auditor opinions on prior findings
+
+#### Fresh Claude M-1 (dust swap insolvency) — **I believe this is a FALSE POSITIVE**
+
+I traced the arithmetic at `pool.move:554-575` with `amount_in = 1`:
+
+- `total_fee = 1 * 1 / 10000 = 0`
+- `extra_fee_raw = 1 / 100_000 = 0` → `extra_fee = 1` (floored)
+- `accrue_fee(pool, 0, 1, a_side=true)`: `hook_1_portion = 1*50/100 = 0`, `hook_2_portion = 1 - 0 = 1`, `lp_portion = 0` (saturated since `total_fee ≤ extra_fee`)
+- Returns `(lp_fee=0, hook_1_fee=0, hook_2_fee=1)`
+- `reserve_fee = extra_fee + lp_fee = 1 + 0 = 1`
+- `pool.reserve_a = pool.reserve_a + 1 - 1 = pool.reserve_a + 0` (unchanged)
+- `pool.reserve_b -= amount_out = 0` (amount_out floors to 0)
+- Store: `+1` (deposit `fa_in`) and `-0` (withdraw `fa_out`). Net store delta: `+1`.
+- Tracked delta: `reserve_a +0`, `hook_2_fee_a +1`. Net tracked: `+1`. ✅
+
+The fresh-Claude reading that "`reserve_a += amount_in - 1` while hook records 1 unit unbacked" mis-reads line 567: the reserve update is `amount_in - reserve_fee = amount_in - (extra_fee + lp_fee)`, not `amount_in - extra_fee` only. The hook bucket increment is exactly matched by the reserve shortfall. Solvency invariant holds.
+
+I recommend that at triage phase, fresh-Claude M-1 be marked FALSE POSITIVE with a regression test driving repeated dust swaps and asserting `store_balance == reserve + hook_1 + hook_2 + lp_pending_sum` after each.
+
+#### Fresh Claude M-2 (TWAP not a price oracle) — **Agreed, design clarification**
+
+The `twap_cumulative_a/b` fields do accumulate `reserve × dt`, not `price × dt`. The doc comment on `update_twap` ("Uniswap V2 style") is misleading. I recommend Option A (doc-only rename to "liquidity-depth cumulative") over Option B (add real price-cumulative fields). Rationale: no satellite consumes these fields as a price oracle today, and adding fields via compat upgrade is a bigger surface than just correcting the doc comment. The meta_router satellite can compute price TWAP off-chain from the reserve history if ever needed.
+
+#### Fresh Claude M-3 (`remove_liquidity` missing lock) — **Agreed, accept**
+
+Confirmed at `pool.move:734-810`: asserts `!pool.locked` but never sets it during execution. Inconsistent with the R2 hardening of `claim_lp_fees`/`claim_hook_fees`. Compat-safe fix: bracket body with `pool.locked = true; ... pool.locked = false;` before each return path.
+
+#### Kimi M-1 (`add_liquidity_entry` missing deadline) — **Agreed, but compat-breaking**
+
+Adding a new parameter to a `public entry fun` is a compat break under Aptos compat policy — existing callers lose. Proper fix is to add a sibling `add_liquidity_entry_v2(provider, pool_addr, amount_a, amount_b, min_shares_out, deadline)` and deprecate the old one via doc comment. Cannot modify `add_liquidity_entry` in place.
+
+Same applies to `remove_liquidity_entry`, `claim_lp_fees_entry`, `claim_hook_fees_entry` — none have deadlines. Kimi only flagged `add_liquidity_entry`; the others have the same gap.
+
+#### Grok L-3 (no emergency pause) — **Disagree, reject**
+
+Grok's "add `paused: bool` + `emergency_withdraw`" recommendation directly contradicts Beta's explicit **zero admin surface** design principle (locked in `darbitex_beta_plan.md` as Core Principle #2: "After `create_canonical_pool` returns, no function anywhere in Beta core can alter fee, curve, pair, or hook assignment. Zero admin surface at the pool level."). Adding a pause would reintroduce the exact admin-pause-risk category Beta was designed to eliminate. Users chose Beta specifically because their LP positions cannot be frozen by any multisig vote.
+
+Recommendation: document the design rationale in the triage response. Accept Grok's observation ("there is no pause") as a factually correct statement that describes the design, not as a finding to fix.
+
+### Summary
+
+3 new LOWs I found on top of prior-round findings. Net cycle state:
+
+| Finding | Origin | My position |
+|---|---|---|
+| Dust swap insolvency | Fresh Claude M-1 | FALSE POSITIVE (verified by trace) |
+| TWAP not price oracle | Fresh Claude M-2 | Accept, doc-only fix |
+| `remove_liquidity` missing lock | Fresh Claude M-3 | Accept, compat-safe fix |
+| `add_liquidity_entry` deadline | Kimi M-1 | Accept, needs `_v2` sibling (+ same for other entry wrappers) |
+| No emergency pause | Grok L-3 | Reject, conflicts with design principle |
+| Flash fee u256 | this audit L-1 | Accept, defensive |
+| add_liquidity cast on extreme ratios | this audit L-2 | Accept, defensive |
+| `update_twap` asymmetry | this audit L-3 | Cosmetic |
+| Hook split rounding | this audit I-1 | Known, accepted R1 |
+| `hook_listing_price` view aborts | this audit I-2 | UX only |
+| `buy_hook` no deadline | this audit I-3 | Completeness only |
+
+Still awaiting: Gemini, DeepSeek, Qwen, ChatGPT. No fixes until cycle ends.
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
