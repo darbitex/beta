@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { aggregateQuotes, type AggregatorResult, type Quote, type Venue } from "../chain/aggregator";
 import { useFaBalance } from "../chain/balance";
 import { fromRaw, metaEq, normMeta, toRaw } from "../chain/client";
-import { findPool, loadPools, type Pool } from "../chain/pools";
+import { findRoute, loadPools, type Pool, type Route } from "../chain/pools";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
@@ -57,8 +57,7 @@ export function SwapPage() {
   const [inMeta, setInMeta] = useState<string>(TOKENS.APT.meta);
   const [outMeta, setOutMeta] = useState<string>(TOKENS.USDC.meta);
   const [amount, setAmount] = useState("");
-  const [darbitexPool, setDarbitexPool] = useState<Pool | null>(null);
-  const [darbitexAToB, setDarbitexAToB] = useState(true);
+  const [darbitexRoute, setDarbitexRoute] = useState<Route | null>(null);
   const [agg, setAgg] = useState<AggregatorResult | null>(null);
   const [aggLoading, setAggLoading] = useState(false);
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
@@ -86,19 +85,13 @@ export function SwapPage() {
   const balIn = useFaBalance(tIn.meta, tIn.decimals);
   const balOut = useFaBalance(tOut.meta, tOut.decimals);
 
-  // Track darbitex pool context separately so both modes can use it.
+  // Track darbitex route (1-hop or 2-hop) separately so both modes can use it.
   useEffect(() => {
     if (!pools.length || metaEq(inMeta, outMeta)) {
-      setDarbitexPool(null);
+      setDarbitexRoute(null);
       return;
     }
-    const pool = findPool(pools, tIn.meta, tOut.meta);
-    if (!pool) {
-      setDarbitexPool(null);
-      return;
-    }
-    setDarbitexPool(pool);
-    setDarbitexAToB(metaEq(pool.meta_a, tIn.meta));
+    setDarbitexRoute(findRoute(pools, tIn.meta, tOut.meta));
   }, [pools, inMeta, outMeta, tIn, tOut]);
 
   // Fetch quotes whenever inputs change. Debounced so rapid typing doesn't
@@ -121,8 +114,7 @@ export function SwapPage() {
           tokenIn: tIn,
           tokenOut: tOut,
           amountInRaw: rawIn,
-          darbitexPool: darbitexPool?.addr ?? null,
-          darbitexAToB,
+          darbitexRoute,
         });
         if (cancelled) return;
         setAgg(result);
@@ -145,7 +137,7 @@ export function SwapPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [amountNum, inMeta, outMeta, tIn, tOut, darbitexPool, darbitexAToB, mode]);
+  }, [amountNum, inMeta, outMeta, tIn, tOut, darbitexRoute, mode]);
 
   const activeQuote: Quote | null = useMemo(() => {
     if (!agg || !selectedVenue) return null;
@@ -180,31 +172,32 @@ export function SwapPage() {
 
       let tx;
       if (activeQuote.venue === "darbitex") {
-        // Mode "swap" uses the core router directly (fewer hops, lower gas).
-        // Mode "aggregator" with darbitex winner uses aggregator::swap_darbitex
-        // so the namespace is consistent with the other venues.
-        if (mode === "swap") {
+        const route = activeQuote.darbitexRoute!;
+        const hopOuts = activeQuote.darbitexHopOuts ?? [];
+        if (route.pools.length === 1) {
+          // 1-hop: use existing core router entry
           tx = buildEntryTx("router", "swap_with_deadline", [
-            activeQuote.darbitexPool!,
+            route.pools[0].addr,
             tIn.meta,
             rawIn.toString(),
             minOut.toString(),
             deadline.toString(),
           ]);
         } else {
-          tx = buildEntryTx(
-            "aggregator",
-            "swap_darbitex",
-            [
-              activeQuote.darbitexPool!,
-              tIn.meta,
-              rawIn.toString(),
-              minOut.toString(),
-              deadline.toString(),
-            ],
-            [],
-            AGGREGATOR_PACKAGE,
-          );
+          // 2-hop: per-hop min_out floors. Apply slippage to each hop's
+          // expected output (computed during quoting).
+          const slipBps = BigInt(Math.floor((1 - slippage) * 10000));
+          const minOut1 = (hopOuts[0] * slipBps) / 10000n;
+          const minOut2 = (hopOuts[1] * slipBps) / 10000n;
+          tx = buildEntryTx("router", "swap_2hop", [
+            route.pools[0].addr,
+            route.pools[1].addr,
+            tIn.meta,
+            rawIn.toString(),
+            minOut1.toString(),
+            minOut2.toString(),
+            deadline.toString(),
+          ]);
         }
       } else if (activeQuote.venue === "hyperion") {
         // Hyperion a_to_b: true iff input meta sorts before output meta lexicographically.
@@ -375,7 +368,11 @@ export function SwapPage() {
           <div className="venue-list">
             <div className="venue-list-title">Routes</div>
             <VenueRow
-              label="Darbitex"
+              label={
+                agg.darbitex?.darbitexRoute && agg.darbitex.darbitexRoute.pools.length > 1
+                  ? `Darbitex (${agg.darbitex.darbitexRoute.pools.length}-hop)`
+                  : "Darbitex"
+              }
               quote={agg.darbitex}
               decimals={tOut.decimals}
               isBest={agg.best?.venue === "darbitex"}

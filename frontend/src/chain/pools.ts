@@ -144,18 +144,66 @@ async function loadSinglePool(addr: string): Promise<Pool | null> {
 }
 
 export function findPool(pools: Pool[], metaIn: string, metaOut: string): Pool | undefined {
-  const hit = pools.find(
+  return pools.find(
     (p) =>
       (metaEq(p.meta_a, metaIn) && metaEq(p.meta_b, metaOut)) ||
       (metaEq(p.meta_a, metaOut) && metaEq(p.meta_b, metaIn)),
   );
-  if (!hit) {
-    logWarn("pools", "findPool miss", {
-      metaIn,
-      metaOut,
-      poolCount: pools.length,
-      poolPairs: pools.map((p) => `${p.meta_a}/${p.meta_b}`),
-    });
+}
+
+// A Darbitex route: one or two pools forming a path from metaIn to metaOut.
+// aToBs[i] is the direction for pools[i] — whether the swap on that pool
+// sends token_a out as token_b (true) or token_b out as token_a (false).
+export type Route = {
+  pools: Pool[];
+  aToBs: boolean[];
+  intermediateMeta?: string; // only for 2-hop
+};
+
+// Find a direct 1-hop or an intermediate 2-hop path from metaIn to metaOut
+// through the loaded Darbitex pool universe. 2-hop walks the pool graph
+// once — O(pools^2), fine for small pool counts. 3-hop is skipped for now.
+export function findRoute(
+  pools: Pool[],
+  metaIn: string,
+  metaOut: string,
+): Route | null {
+  // 1-hop: direct pool
+  const direct = findPool(pools, metaIn, metaOut);
+  if (direct) {
+    return {
+      pools: [direct],
+      aToBs: [metaEq(direct.meta_a, metaIn)],
+    };
   }
-  return hit;
+
+  // 2-hop: find pool P1 with metaIn on one side, and pool P2 with the
+  // other side of P1 matching one side of P2, and metaOut on the other.
+  for (const p1 of pools) {
+    let intermediate: string | null = null;
+    if (metaEq(p1.meta_a, metaIn)) intermediate = p1.meta_b;
+    else if (metaEq(p1.meta_b, metaIn)) intermediate = p1.meta_a;
+    if (!intermediate) continue;
+
+    for (const p2 of pools) {
+      if (p2 === p1) continue;
+      const hasIntermediate = metaEq(p2.meta_a, intermediate) || metaEq(p2.meta_b, intermediate);
+      if (!hasIntermediate) continue;
+      const hasOut = metaEq(p2.meta_a, metaOut) || metaEq(p2.meta_b, metaOut);
+      if (!hasOut) continue;
+      return {
+        pools: [p1, p2],
+        aToBs: [metaEq(p1.meta_a, metaIn), metaEq(p2.meta_a, intermediate)],
+        intermediateMeta: intermediate,
+      };
+    }
+  }
+
+  logWarn("pools", "findRoute miss (no 1-hop or 2-hop)", {
+    metaIn,
+    metaOut,
+    poolCount: pools.length,
+    poolPairs: pools.map((p) => `${p.meta_a}/${p.meta_b}`),
+  });
+  return null;
 }

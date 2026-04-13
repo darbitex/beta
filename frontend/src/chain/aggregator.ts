@@ -6,6 +6,7 @@ import {
 } from "../config";
 import { viewFn } from "./client";
 import { logError } from "./logger";
+import type { Route } from "./pools";
 
 // Which venue a quote came from.
 export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana";
@@ -13,12 +14,15 @@ export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana";
 export type Quote = {
   venue: Venue;
   // Hint to reconstruct the execute call
-  darbitexPool?: string;
+  darbitexRoute?: Route;  // 1-hop or 2-hop
   hyperionPool?: string;
   liquidswapTypes?: [string, string]; // [inCoin, outCoin]
   liquidswapCurve?: "stable" | "uncorrelated";
   cellanaIsStable?: boolean;
   amountOutRaw: bigint;
+  // Per-hop outputs, for 2-hop quotes. Used to derive tight per-hop
+  // min_out floors at execute time.
+  darbitexHopOuts?: bigint[];
 };
 
 export type AggregatorResult = {
@@ -42,22 +46,43 @@ function agg<T extends unknown[] = unknown[]>(
   );
 }
 
-async function quoteDarbitex(
+async function quoteDarbitexSingleHop(
   poolAddr: string,
   amountInRaw: bigint,
   aToB: boolean,
+): Promise<bigint> {
+  const res = await agg<[string | number]>("quote_darbitex", [], [
+    poolAddr,
+    amountInRaw.toString(),
+    aToB,
+  ]);
+  return BigInt(String(res[0] ?? "0"));
+}
+
+async function quoteDarbitexRoute(
+  route: Route,
+  amountInRaw: bigint,
 ): Promise<Quote | null> {
   try {
-    const res = await agg<[string | number]>("quote_darbitex", [], [
-      poolAddr,
-      amountInRaw.toString(),
-      aToB,
-    ]);
-    const out = BigInt(String(res[0] ?? "0"));
-    if (out === 0n) return null;
-    return { venue: "darbitex", darbitexPool: poolAddr, amountOutRaw: out };
+    const hopOuts: bigint[] = [];
+    let current = amountInRaw;
+    for (let i = 0; i < route.pools.length; i++) {
+      current = await quoteDarbitexSingleHop(route.pools[i].addr, current, route.aToBs[i]);
+      hopOuts.push(current);
+      if (current === 0n) return null;
+    }
+    return {
+      venue: "darbitex",
+      darbitexRoute: route,
+      darbitexHopOuts: hopOuts,
+      amountOutRaw: current,
+    };
   } catch (e) {
-    logError("quoteDarbitex", `failed pool=${poolAddr} amount=${amountInRaw} aToB=${aToB}`, e);
+    logError(
+      "quoteDarbitexRoute",
+      `failed hops=${route.pools.length} amount=${amountInRaw}`,
+      e,
+    );
     return null;
   }
 }
@@ -250,14 +275,13 @@ export async function aggregateQuotes(params: {
   tokenIn: TokenConfig;
   tokenOut: TokenConfig;
   amountInRaw: bigint;
-  darbitexPool: string | null;
-  darbitexAToB: boolean;
+  darbitexRoute: Route | null;
 }): Promise<AggregatorResult> {
-  const { tokenIn, tokenOut, amountInRaw, darbitexPool, darbitexAToB } = params;
+  const { tokenIn, tokenOut, amountInRaw, darbitexRoute } = params;
 
   const [darbitex, hyperion, liquidswap, cellana] = await Promise.all([
-    darbitexPool
-      ? quoteDarbitex(darbitexPool, amountInRaw, darbitexAToB)
+    darbitexRoute
+      ? quoteDarbitexRoute(darbitexRoute, amountInRaw)
       : Promise.resolve(null),
     bestHyperionQuote(tokenIn.meta, tokenOut.meta, amountInRaw),
     tokenIn.coinType && tokenOut.coinType
