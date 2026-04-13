@@ -64,11 +64,14 @@ Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0x64eb452541d150191d46c0522edc3072509875c543d86779475613d7828e1f46` | `LIa6r1DiE6ZmWKmygE2gzdCoO-P4V-_JulZxFZx4LcM` | 1.70 MiB | 81 | 2028-04-18 | `/index.html`, `/assets/index-Bw0NLo27.js`, `/assets/index-Dk_OrSqq.css`, `/favicon.svg`, `/manifest.json` |
+| 1 | `0x4333ad3c58743371c675ec47f2d22ded9a95c89e3946b515fdc4b9c177f89150` | `07wfnaTbEb1L9Vj1I-cFyg7D7-V_zt4XEE_7mQlE2pU` | 1.70 MiB | 54 | ~2026-10-06 | `/index.html`, `/assets/index-D6f65Mvs.js`, `/assets/index-BAHuG_mo.css`, `/favicon.svg`, `/manifest.json` |
 
-**Superseded shared quilts (no longer referenced by the site, left to expire naturally — shared blobs cannot be burned):**
-- `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` (blob `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U`) — formerly held `/index.html` + old JS
-- `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` (blob `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI`) — formerly held CSS + favicon + manifest
+Short lease (epoch 54) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
+
+**Superseded shared quilts (orphaned, not funded, left to expire naturally — shared blobs cannot be burned):**
+- `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` (blob `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U`) — formerly `/index.html` + old JS. **Locked ~3.229 WAL in the pool.** Expiry epoch 81 (~2028-04-18).
+- `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` (blob `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI`) — formerly CSS + favicon + manifest. **Locked ~3.229 WAL in the pool.** Expiry epoch 81 (~2028-04-18).
+- `0x64eb452541d150191d46c0522edc3072509875c543d86779475613d7828e1f46` (blob `LIa6r1DiE6ZmWKmygE2gzdCoO-P4V-_JulZxFZx4LcM`) — formerly the full bundle between the 2026-04-13 Treasury 3/5 deploy and the 2026-04-13 balance/slippage deploy. **Not funded** (caught by new SOP), so no WAL loss. Expires naturally at the original lease end.
 
 Site references blobs by content hash (blob ID), so the shared migration was
 zero-downtime and no site-object update was required.
