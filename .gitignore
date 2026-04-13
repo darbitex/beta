@@ -1,7 +1,10 @@
 contracts/build/
 contracts/.aptos/
-satellites/*/build/
-satellites/*/.aptos/
+aggregator/*/build/
+aggregator/build/
+aggregator/.aptos/
+arbitrage/*/build/
+arbitrage/*/.aptos/
 .DS_Store
 *.swp
 *.swo

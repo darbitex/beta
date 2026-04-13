@@ -1,0 +1,24 @@
+[package]
+name = "dex"
+version = "1.0.0"
+upgrade_policy = "compatible"
+
+[addresses]
+dex_contract = "0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c"
+dex_deployer = "0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c"
+commission = "0x661799897c0d2e94c1de976cb3f0e344672c71871e50188622d1b9192723b44c"
+context = "0x5dd39b261199f6f9232b67c4662248333707328adbc750ba921a8df1599dc31f"
+fee_sharer = "0xcd21066689eb2b346b7cc9f61dd8836693435ef7663725da41075f7a02bae3ae"
+pyth = "0x7e783b349d3e89cf5931af376ebeadbfab855b3fa239b7ada8f5a92fbea6b387"
+deployer = "0xb31e712b26fd295357355f6845e77c888298636609e93bc9b05f0f604049f434"
+wormhole = "0x5bc11445584a763c1fa7ed39081f1b920954da14e04b32440cba863d03e19625"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+commission-package = { local = "../commission-package" }
+context = { local = "../context" }
+caas_framework = { local = "../caas_framework" }
+Pyth = { local = "../Pyth" }
+fee-sharer = { local = "../fee-sharer" }
+Wormhole = { local = "../Wormhole" }
+Deployer = { local = "../Deployer" }

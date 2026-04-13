@@ -1,0 +1,2486 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gas Report - 0x5b4b-flash_arb-arb_darbitex_to_hyperion</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <script>
+        function copyTable(btn) {
+            const table = btn.closest('.table-wrapper').querySelector('table');
+            const rows = Array.from(table.rows);
+            const text = rows.map(row =>
+                Array.from(row.cells).map(cell => cell.textContent.trim()).join('\t')
+            ).join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = orig, 1000);
+            }).catch(() => {
+                const orig = btn.textContent;
+                btn.textContent = 'Failed';
+                setTimeout(() => btn.textContent = orig, 1000);
+            });
+        }
+
+        function exportTableCsv(btn) {
+            const wrapper = btn.closest('.table-wrapper');
+            const table = wrapper.querySelector('table');
+            const rows = Array.from(table.rows);
+            const csv = rows.map(row =>
+                Array.from(row.cells).map(cell => {
+                    let val = cell.textContent.trim();
+                    // Escape quotes and wrap in quotes if contains comma or quote
+                    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                        val = '"' + val.replace(/"/g, '""') + '"';
+                    }
+                    return val;
+                }).join(',')
+            ).join('\n');
+
+            // Get table name from data-name attribute
+            const name = table.dataset.name || 'table';
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = name + '.csv';
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
+
+        function sortTable(th, colIndex) {
+            const table = th.closest('table');
+            const tbody = table.tBodies[0] || table;
+            const rows = Array.from(tbody.querySelectorAll('tr')).slice(1); // skip header
+
+            if (rows.length === 0) return;
+
+            const wasAsc = th.classList.contains('sort-asc');
+            const wasDesc = th.classList.contains('sort-desc');
+            const wasSorted = wasAsc || wasDesc;
+
+            // Check if column is marked to default to ascending (text columns)
+            const defaultAsc = th.hasAttribute('data-sort-asc');
+
+            // Clear other sort indicators
+            th.closest('tr').querySelectorAll('th').forEach(h => {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+
+            // Determine new sort direction
+            // - If already sorted, toggle direction
+            // - If not sorted: use data-sort-asc attribute to determine default
+            let sortDesc;
+            if (wasSorted) {
+                sortDesc = wasAsc; // toggle: was asc -> now desc
+            } else {
+                sortDesc = !defaultAsc; // default desc unless marked with data-sort-asc
+            }
+
+            th.classList.add(sortDesc ? 'sort-desc' : 'sort-asc');
+
+            // Check if column is marked as numeric
+            const isNumeric = th.hasAttribute('data-sort-num');
+
+            rows.sort((a, b) => {
+                const aVal = a.cells[colIndex]?.textContent.trim() || '';
+                const bVal = b.cells[colIndex]?.textContent.trim() || '';
+
+                if (isNumeric) {
+                    // Handle "/" placeholder and other non-numeric values as 0
+                    const parseNum = (v) => {
+                        const n = parseFloat(v.replace(/[,%]/g, ''));
+                        return isNaN(n) ? 0 : n;
+                    };
+                    const aNum = parseNum(aVal);
+                    const bNum = parseNum(bVal);
+                    return sortDesc ? bNum - aNum : aNum - bNum;
+                }
+                // String comparison
+                return sortDesc ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
+            });
+
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        function makeTablesSortable() {
+            const tables = document.querySelectorAll('table');
+            tables.forEach((table) => {
+                if (table.id === 'summary-table') return;
+                const headerRow = table.querySelector('tr');
+                if (!headerRow) return;
+                headerRow.querySelectorAll('th').forEach((th, colIndex) => {
+                    th.classList.add('sortable');
+                    th.onclick = () => sortTable(th, colIndex);
+                });
+            });
+        }
+
+        function wrapTablesWithCopyButton() {
+            const tables = document.querySelectorAll('table');
+            tables.forEach((table) => {
+                if (table.id === 'summary-table') return;
+                if (table.parentElement.classList.contains('table-wrapper')) return;
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'table-wrapper';
+
+                const footer = document.createElement('div');
+                footer.className = 'table-footer';
+
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.onclick = function () { copyTable(this); };
+
+                const csvBtn = document.createElement('button');
+                csvBtn.className = 'copy-btn';
+                csvBtn.textContent = 'CSV';
+                csvBtn.style.marginLeft = '4px';
+                csvBtn.onclick = function () { exportTableCsv(this); };
+
+                footer.appendChild(copyBtn);
+                footer.appendChild(csvBtn);
+                table.parentNode.insertBefore(wrapper, table);
+                wrapper.appendChild(table);
+                wrapper.appendChild(footer);
+            });
+        }
+    </script>
+</head>
+
+<body onload="wrapTablesWithCopyButton(); makeTablesSortable();">
+    <header>
+        <h1>Gas Report - 0x5b4b-flash_arb-arb_darbitex_to_hyperion</h1>
+    </header>
+
+    <details open>
+        <summary>
+            <h2>Summary</h2>
+        </summary>
+        <p>
+            This summary corresponds to the <code>FeeStatement</code> event emitted by the transaction.
+        </p>
+        <table id="summary-table">
+            <tr>
+                <th>Category</th>
+                <th style="text-align: right">Cost</th>
+                <th>Unit</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td class="category-label">Execution Gas</td>
+                <td style="text-align: right">197.81621</td>
+                <td>gas units</td>
+                <td>Transient resources for execution, like CPU time or memory</td>
+            </tr>
+            <tr>
+                <td class="category-label">IO Gas</td>
+                <td style="text-align: right">269.80482</td>
+                <td>gas units</td>
+                <td>Storage reads and writes</td>
+            </tr>
+            <tr>
+                <td class="category-label">Storage Fee</td>
+                <td style="text-align: right">0</td>
+                <td>APT</td>
+                <td>Cost for new or expanded storage slots</td>
+            </tr>
+            <tr>
+                <td class="category-label">Storage Refund</td>
+                <td style="text-align: right">0</td>
+                <td>APT</td>
+                <td>Refund for deleted storage slots</td>
+            </tr>
+        </table>
+        <p style="font-size: 0.9em; color: #666;">
+            <b>Note:</b> Values may differ slightly from the <code>FeeStatement</code> due to rounding.
+        </p>
+    </details>
+
+    <details open>
+        <summary>
+            <h2>Flamegraphs</h2>
+        </summary>
+        <object data="assets/exec_io.svg" type="image/svg+xml" class="flamegraph"></object>
+
+        (No storage graph to show.)
+    </details>
+
+    <details open>
+        <summary>
+            <h2>Cost Break-down</h2>
+        </summary>
+        <p>The Aptos network charges a transaction in three parts: (1) execution, (2) IO, and (3) storage.
+            Execution and IO are measured in gas units; storage is measured in APT.</p>
+
+        <details class="subsection" open>
+            <summary>
+                <h3>Execution (197.81621 gas units)</h3>
+            </summary>
+            <p>Execution costs cover transient resources used for executing the transaction,
+                such as CPU time or memory usage.</p>
+
+            <h4>Intrinsic Cost</h4>
+            27.6 gas units, 13.95% of execution gas.
+
+
+
+            <h4>Dependencies</h4>
+            <table data-name="exec_dependencies">
+                <tr>
+                    <th data-sort-asc>Name</th>
+                    <th style="text-align: right" data-sort-num>Size in Bytes</th>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::pool_v3</td>
+                    <td style="text-align: right">30272</td>
+                    <td style="text-align: right">13.45884</td>
+                    <td style="text-align: right">6.80%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool</td>
+                    <td style="text-align: right">8567</td>
+                    <td style="text-align: right">4.34274</td>
+                    <td style="text-align: right">2.20%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool</td>
+                    <td style="text-align: right">8168</td>
+                    <td style="text-align: right">4.17516</td>
+                    <td style="text-align: right">2.11%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::rewarder</td>
+                    <td style="text-align: right">7298</td>
+                    <td style="text-align: right">3.80976</td>
+                    <td style="text-align: right">1.93%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::package_manager</td>
+                    <td style="text-align: right">6458</td>
+                    <td style="text-align: right">3.45696</td>
+                    <td style="text-align: right">1.75%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::validation_logic</td>
+                    <td style="text-align: right">6216</td>
+                    <td style="text-align: right">3.35532</td>
+                    <td style="text-align: right">1.70%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic</td>
+                    <td style="text-align: right">5386</td>
+                    <td style="text-align: right">3.00672</td>
+                    <td style="text-align: right">1.52%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config</td>
+                    <td style="text-align: right">5105</td>
+                    <td style="text-align: right">2.8887</td>
+                    <td style="text-align: right">1.46%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::token_base</td>
+                    <td style="text-align: right">5038</td>
+                    <td style="text-align: right">2.86056</td>
+                    <td style="text-align: right">1.45%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory</td>
+                    <td style="text-align: right">4929</td>
+                    <td style="text-align: right">2.81478</td>
+                    <td style="text-align: right">1.42%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::position_blacklist_v2</td>
+                    <td style="text-align: right">3299</td>
+                    <td style="text-align: right">2.13018</td>
+                    <td style="text-align: right">1.08%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math</td>
+                    <td style="text-align: right">2833</td>
+                    <td style="text-align: right">1.93446</td>
+                    <td style="text-align: right">0.98%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::stablecoin</td>
+                    <td style="text-align: right">2613</td>
+                    <td style="text-align: right">1.84206</td>
+                    <td style="text-align: right">0.93%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::lp</td>
+                    <td style="text-align: right">2282</td>
+                    <td style="text-align: right">1.70304</td>
+                    <td style="text-align: right">0.86%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::math_utils</td>
+                    <td style="text-align: right">1853</td>
+                    <td style="text-align: right">1.52286</td>
+                    <td style="text-align: right">0.77%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::i32</td>
+                    <td style="text-align: right">1765</td>
+                    <td style="text-align: right">1.4859</td>
+                    <td style="text-align: right">0.75%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::tick_bitmap</td>
+                    <td style="text-align: right">1742</td>
+                    <td style="text-align: right">1.47624</td>
+                    <td style="text-align: right">0.75%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::blocklistable</td>
+                    <td style="text-align: right">1474</td>
+                    <td style="text-align: right">1.36368</td>
+                    <td style="text-align: right">0.69%</td>
+                </tr>
+                <tr>
+                    <td>0x98bc..::pausable</td>
+                    <td style="text-align: right">1360</td>
+                    <td style="text-align: right">1.3158</td>
+                    <td style="text-align: right">0.67%</td>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::flash_arb</td>
+                    <td style="text-align: right">1152</td>
+                    <td style="text-align: right">1.22844</td>
+                    <td style="text-align: right">0.62%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::fungible_asset_manager</td>
+                    <td style="text-align: right">1032</td>
+                    <td style="text-align: right">1.17804</td>
+                    <td style="text-align: right">0.60%</td>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::adapter</td>
+                    <td style="text-align: right">835</td>
+                    <td style="text-align: right">1.0953</td>
+                    <td style="text-align: right">0.55%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::position_blacklist</td>
+                    <td style="text-align: right">731</td>
+                    <td style="text-align: right">1.05162</td>
+                    <td style="text-align: right">0.53%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::stablecoin_utils</td>
+                    <td style="text-align: right">346</td>
+                    <td style="text-align: right">0.88992</td>
+                    <td style="text-align: right">0.45%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::helper</td>
+                    <td style="text-align: right">174</td>
+                    <td style="text-align: right">0.81768</td>
+                    <td style="text-align: right">0.41%</td>
+                </tr>
+            </table>
+
+            <h4>Operations</h4>
+            <table data-name="exec_operations">
+                <tr>
+                    <th data-sort-asc>Operation</th>
+                    <th style="text-align: right" data-sort-num>Number of Hits</th>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td>call_generic</td>
+                    <td style="text-align: right">283</td>
+                    <td style="text-align: right">15.45667</td>
+                    <td style="text-align: right">7.81%</td>
+                </tr>
+                <tr>
+                    <td>create_ty</td>
+                    <td style="text-align: right">1699</td>
+                    <td style="text-align: right">12.06</td>
+                    <td style="text-align: right">6.10%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::borrow_box&lt;u64, vector&lt;0x1::smart_table::Entry&lt;address, 0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::pool::ReserveInfo&gt;&gt;, 0x1::table::Box&lt;vector&lt;0x1::smart_table::Entry&lt;address, 0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::pool::ReserveInfo&gt;&gt;&gt;&gt;</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">9.49075</td>
+                    <td style="text-align: right">4.80%</td>
+                </tr>
+                <tr>
+                    <td>call</td>
+                    <td style="text-align: right">190</td>
+                    <td style="text-align: right">9.35522</td>
+                    <td style="text-align: right">4.73%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::borrow_box&lt;u64, vector&lt;0x1::smart_table::Entry&lt;address, address&gt;&gt;, 0x1::table::Box&lt;vector&lt;0x1::smart_table::Entry&lt;address, address&gt;&gt;&gt;&gt;</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.34978</td>
+                    <td style="text-align: right">4.73%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::contains_box&lt;address, bool, 0x1::table::Box&lt;bool&gt;&gt;</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.29407</td>
+                    <td style="text-align: right">4.70%</td>
+                </tr>
+                <tr>
+                    <td>copy_loc</td>
+                    <td style="text-align: right">560</td>
+                    <td style="text-align: right">5.0624</td>
+                    <td style="text-align: right">2.56%</td>
+                </tr>
+                <tr>
+                    <td>read_ref</td>
+                    <td style="text-align: right">282</td>
+                    <td style="text-align: right">4.01394</td>
+                    <td style="text-align: right">2.03%</td>
+                </tr>
+                <tr>
+                    <td>move_loc</td>
+                    <td style="text-align: right">776</td>
+                    <td style="text-align: right">3.42216</td>
+                    <td style="text-align: right">1.73%</td>
+                </tr>
+                <tr>
+                    <td>ld_const</td>
+                    <td style="text-align: right">43</td>
+                    <td style="text-align: right">2.55303</td>
+                    <td style="text-align: right">1.29%</td>
+                </tr>
+                <tr>
+                    <td>st_loc</td>
+                    <td style="text-align: right">482</td>
+                    <td style="text-align: right">2.12562</td>
+                    <td style="text-align: right">1.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::hash::sha3_256</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">1.97016</td>
+                    <td style="text-align: right">1.00%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::exists_at&lt;0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c::pool_v3::LiquidityPoolV3&gt;</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">1.78618</td>
+                    <td style="text-align: right">0.90%</td>
+                </tr>
+                <tr>
+                    <td>imm_borrow_global</td>
+                    <td style="text-align: right">74</td>
+                    <td style="text-align: right">1.36012</td>
+                    <td style="text-align: right">0.69%</td>
+                </tr>
+                <tr>
+                    <td>imm_borrow_field</td>
+                    <td style="text-align: right">174</td>
+                    <td style="text-align: right">1.2789</td>
+                    <td style="text-align: right">0.65%</td>
+                </tr>
+                <tr>
+                    <td>imm_borrow_field_generic</td>
+                    <td style="text-align: right">166</td>
+                    <td style="text-align: right">1.2201</td>
+                    <td style="text-align: right">0.62%</td>
+                </tr>
+                <tr>
+                    <td>br_false</td>
+                    <td style="text-align: right">272</td>
+                    <td style="text-align: right">1.19952</td>
+                    <td style="text-align: right">0.61%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_user_derived_object_address_impl</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">0.88224</td>
+                    <td style="text-align: right">0.45%</td>
+                </tr>
+                <tr>
+                    <td>eq</td>
+                    <td style="text-align: right">52</td>
+                    <td style="text-align: right">0.84044</td>
+                    <td style="text-align: right">0.42%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0x1::fungible_asset::Withdraw&gt;</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.81978</td>
+                    <td style="text-align: right">0.41%</td>
+                </tr>
+                <tr>
+                    <td>exists_generic</td>
+                    <td style="text-align: right">86</td>
+                    <td style="text-align: right">0.79034</td>
+                    <td style="text-align: right">0.40%</td>
+                </tr>
+                <tr>
+                    <td>ret</td>
+                    <td style="text-align: right">352</td>
+                    <td style="text-align: right">0.7744</td>
+                    <td style="text-align: right">0.39%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0xe5c5befe31ce06bc1f2fd31210988aac08af6d821b039935557a6f14c03471be::stablecoin::Deposit&gt;</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.59532</td>
+                    <td style="text-align: right">0.30%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0xe5c5befe31ce06bc1f2fd31210988aac08af6d821b039935557a6f14c03471be::stablecoin::Withdraw&gt;</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.59532</td>
+                    <td style="text-align: right">0.30%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c::pool_v3::PoolSnapshotV2&gt;</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.59046</td>
+                    <td style="text-align: right">0.30%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0x1::fungible_asset::Deposit&gt;</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.54652</td>
+                    <td style="text-align: right">0.28%</td>
+                </tr>
+                <tr>
+                    <td>0x1::aptos_hash::sip_hash</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.54108</td>
+                    <td style="text-align: right">0.27%</td>
+                </tr>
+                <tr>
+                    <td>pack</td>
+                    <td style="text-align: right">43</td>
+                    <td style="text-align: right">0.50326</td>
+                    <td style="text-align: right">0.25%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2::pool::Swapped&gt;</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.44406</td>
+                    <td style="text-align: right">0.22%</td>
+                </tr>
+                <tr>
+                    <td>neq</td>
+                    <td style="text-align: right">26</td>
+                    <td style="text-align: right">0.38662</td>
+                    <td style="text-align: right">0.20%</td>
+                </tr>
+                <tr>
+                    <td>0x1::vector::move_range&lt;u8&gt;</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.379</td>
+                    <td style="text-align: right">0.19%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::write_module_event_to_store&lt;0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c::pool_v3::SwapBeforeEvent&gt;</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.34646</td>
+                    <td style="text-align: right">0.18%</td>
+                </tr>
+                <tr>
+                    <td>imm_borrow_loc</td>
+                    <td style="text-align: right">151</td>
+                    <td style="text-align: right">0.3322</td>
+                    <td style="text-align: right">0.17%</td>
+                </tr>
+                <tr>
+                    <td>vec_len</td>
+                    <td style="text-align: right">37</td>
+                    <td style="text-align: right">0.29896</td>
+                    <td style="text-align: right">0.15%</td>
+                </tr>
+                <tr>
+                    <td>vec_imm_borrow</td>
+                    <td style="text-align: right">19</td>
+                    <td style="text-align: right">0.23047</td>
+                    <td style="text-align: right">0.12%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::exists_at&lt;0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::a_token_factory::TokenData&gt;</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.21795</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>ld_u64</td>
+                    <td style="text-align: right">97</td>
+                    <td style="text-align: right">0.2134</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::bcs::to_bytes&lt;address&gt;</td>
+                    <td style="text-align: right">18</td>
+                    <td style="text-align: right">0.20736</td>
+                    <td style="text-align: right">0.10%</td>
+                </tr>
+                <tr>
+                    <td>branch</td>
+                    <td style="text-align: right">67</td>
+                    <td style="text-align: right">0.19698</td>
+                    <td style="text-align: right">0.10%</td>
+                </tr>
+                <tr>
+                    <td>mut_borrow_global</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">0.1838</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>add</td>
+                    <td style="text-align: right">30</td>
+                    <td style="text-align: right">0.1764</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>lt</td>
+                    <td style="text-align: right">29</td>
+                    <td style="text-align: right">0.17052</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::exists_at&lt;0x1::fungible_asset::Metadata&gt;</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.16858</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>vec_unpack</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.16542</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>write_ref</td>
+                    <td style="text-align: right">21</td>
+                    <td style="text-align: right">0.15435</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0x1::from_bcs::from_bytes&lt;address&gt;</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.15102</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>mut_borrow_field</td>
+                    <td style="text-align: right">20</td>
+                    <td style="text-align: right">0.147</td>
+                    <td style="text-align: right">0.07%</td>
+                </tr>
+                <tr>
+                    <td>mod</td>
+                    <td style="text-align: right">22</td>
+                    <td style="text-align: right">0.12936</td>
+                    <td style="text-align: right">0.07%</td>
+                </tr>
+                <tr>
+                    <td>shl</td>
+                    <td style="text-align: right">22</td>
+                    <td style="text-align: right">0.12936</td>
+                    <td style="text-align: right">0.07%</td>
+                </tr>
+                <tr>
+                    <td>vec_push_back</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.12564</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>br_true</td>
+                    <td style="text-align: right">27</td>
+                    <td style="text-align: right">0.11907</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::exists_at&lt;0x98bce69c31ee2cf91ac50a3f38db7b422e3df7cdde9fe672ee1d03538a6aeae0::pausable::PauseState&gt;</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.11185</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>div</td>
+                    <td style="text-align: right">17</td>
+                    <td style="text-align: right">0.09996</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>ld_u256</td>
+                    <td style="text-align: right">33</td>
+                    <td style="text-align: right">0.09702</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>ld_false</td>
+                    <td style="text-align: right">40</td>
+                    <td style="text-align: right">0.088</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::signer::borrow_address</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.06615</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x1::create_signer::create_signer</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">0.06612</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>mul</td>
+                    <td style="text-align: right">11</td>
+                    <td style="text-align: right">0.06468</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>ld_u8</td>
+                    <td style="text-align: right">29</td>
+                    <td style="text-align: right">0.0638</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>mut_borrow_loc</td>
+                    <td style="text-align: right">28</td>
+                    <td style="text-align: right">0.0616</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>sub</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">0.0588</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>move_to_generic</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.05514</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>test_variant_generic</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">0.0535</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>bit_and</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.05292</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>cast_u256</td>
+                    <td style="text-align: right">12</td>
+                    <td style="text-align: right">0.05292</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>not</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.05292</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>gt</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">0.04704</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::exists_at&lt;0x1::fungible_asset::FungibleStore&gt;</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">0.04595</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>pop</td>
+                    <td style="text-align: right">30</td>
+                    <td style="text-align: right">0.0441</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>ld_true</td>
+                    <td style="text-align: right">17</td>
+                    <td style="text-align: right">0.0374</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>cast_u128</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">0.03528</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>imm_borrow_variant_field_generic</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.0334</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>ge</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">0.0294</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>xor</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">0.0294</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::function_info::load_function_impl</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.02204</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>unpack</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.02204</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>cast_u8</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.01764</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::dispatchable_deposit&lt;0x1::fungible_asset::FungibleStore&gt;</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.01102</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::dispatchable_withdraw&lt;0x1::fungible_asset::FungibleStore&gt;</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.01102</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>cast_u64</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.00882</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>ld_u128</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.00588</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>le</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.00588</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>freeze_ref</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">0.0036</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>abort</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.0022</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>ld_u16</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.0022</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+            </table>
+            <br />
+            <table data-name="exec_methods_total">
+                <tr>
+                    <th data-sort-asc>Methods (gas including children)</th>
+                    <th style="text-align: right" data-sort-num>Number of Hits</th>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::flash_arb::arb_darbitex_to_hyperion</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">374.81627</td>
+                    <td style="text-align: right">80.15%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::flash_loan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">219.50968</td>
+                    <td style="text-align: right">46.94%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::execute_flash_loan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">209.848</td>
+                    <td style="text-align: right">44.88%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::transfer_underlying_to</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">121.70848</td>
+                    <td style="text-align: right">26.03%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::transfer_underlying_to</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">118.51395</td>
+                    <td style="text-align: right">25.34%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::fungible_asset_manager::transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">116.05799</td>
+                    <td style="text-align: right">24.82%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">102.34504</td>
+                    <td style="text-align: right">21.89%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::validation_logic::validate_flashloan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">65.72068</td>
+                    <td style="text-align: right">14.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::withdraw</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">60.61331</td>
+                    <td style="text-align: right">12.96%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">54.94924</td>
+                    <td style="text-align: right">11.75%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::withdraw</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">47.79359</td>
+                    <td style="text-align: right">10.22%</td>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::adapter::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">43.19165</td>
+                    <td style="text-align: right">9.24%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::pool_v3::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">42.76592</td>
+                    <td style="text-align: right">9.15%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">41.45539</td>
+                    <td style="text-align: right">8.87%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">39.36749</td>
+                    <td style="text-align: right">8.42%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::assert_token_exists</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">34.00837</td>
+                    <td style="text-align: right">7.27%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::is_atoken</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">33.82</td>
+                    <td style="text-align: right">7.23%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::store_exists</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">30.74928</td>
+                    <td style="text-align: right">6.58%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::deposit</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">29.37421</td>
+                    <td style="text-align: right">6.28%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::address_to_object</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">28.91892</td>
+                    <td style="text-align: right">6.18%</td>
+                </tr>
+                <tr>
+                    <td>0x1::smart_table::contains</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">26.9159</td>
+                    <td style="text-align: right">5.76%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_data</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">26.82426</td>
+                    <td style="text-align: right">5.74%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::blocklistable::assert_not_blocklisted</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">24.05548</td>
+                    <td style="text-align: right">5.14%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::blocklistable::is_blocklisted</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">23.76904</td>
+                    <td style="text-align: right">5.08%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::deposit</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">23.19962</td>
+                    <td style="text-align: right">4.96%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table_with_length::borrow</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">21.6482</td>
+                    <td style="text-align: right">4.63%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::balance</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">20.22976</td>
+                    <td style="text-align: right">4.33%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::borrow</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">20.19385</td>
+                    <td style="text-align: right">4.32%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::create_store</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">19.96498</td>
+                    <td style="text-align: right">4.27%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_dispatch_function</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">19.56347</td>
+                    <td style="text-align: right">4.18%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_normalized_income</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">13.07534</td>
+                    <td style="text-align: right">2.80%</td>
+                </tr>
+                <tr>
+                    <td>0x1::features::is_enabled</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">10.71117</td>
+                    <td style="text-align: right">2.29%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::pool_v3::check_protocol_pause</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">10.27107</td>
+                    <td style="text-align: right">2.20%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_normalized_income_by_reserve_data</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">10.20097</td>
+                    <td style="text-align: right">2.18%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table_with_length::contains</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">10.14719</td>
+                    <td style="text-align: right">2.17%</td>
+                </tr>
+                <tr>
+                    <td>0x1::timestamp::now_seconds</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.68005</td>
+                    <td style="text-align: right">2.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_exists</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.66131</td>
+                    <td style="text-align: right">2.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::contains</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.65459</td>
+                    <td style="text-align: right">2.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::assert_reserves_initialized</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.46276</td>
+                    <td style="text-align: right">2.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_configuration_by_reserve_data</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.38499</td>
+                    <td style="text-align: right">2.01%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::position_blacklist_v2::new_v2</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.36647</td>
+                    <td style="text-align: right">2.00%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_flashloan_premium_to_protocol</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.31854</td>
+                    <td style="text-align: right">1.99%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::token_base::scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.31281</td>
+                    <td style="text-align: right">1.99%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::token_base::get_scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.2581</td>
+                    <td style="text-align: right">1.98%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::is_burnt</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.23322</td>
+                    <td style="text-align: right">1.97%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::stablecoin_utils::stablecoin_address</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">7.63512</td>
+                    <td style="text-align: right">1.63%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_object_address</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">5.99704</td>
+                    <td style="text-align: right">1.28%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_with_ref</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">5.10666</td>
+                    <td style="text-align: right">1.09%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::emit</td>
+                    <td style="text-align: right">12</td>
+                    <td style="text-align: right">4.62244</td>
+                    <td style="text-align: right">0.99%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_address</td>
+                    <td style="text-align: right">78</td>
+                    <td style="text-align: right">3.97098</td>
+                    <td style="text-align: right">0.85%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_user_derived_object</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.71133</td>
+                    <td style="text-align: right">0.79%</td>
+                </tr>
+                <tr>
+                    <td>0x1::smart_table::borrow</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">3.37548</td>
+                    <td style="text-align: right">0.72%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_transfer_ref</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.11075</td>
+                    <td style="text-align: right">0.67%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_permission_check</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">2.57603</td>
+                    <td style="text-align: right">0.55%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_with_ref</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">2.56374</td>
+                    <td style="text-align: right">0.55%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::get_underlying_asset_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">2.13245</td>
+                    <td style="text-align: right">0.46%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_sanity_check</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">1.98179</td>
+                    <td style="text-align: right">0.42%</td>
+                </tr>
+                <tr>
+                    <td>0x1::permissioned_signer::check_permission_consume</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">1.81977</td>
+                    <td style="text-align: right">0.39%</td>
+                </tr>
+                <tr>
+                    <td>0x98bc..::pausable::assert_not_paused</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">1.63113</td>
+                    <td style="text-align: right">0.35%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::store_metadata</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">1.52656</td>
+                    <td style="text-align: right">0.33%</td>
+                </tr>
+                <tr>
+                    <td>0x1::permissioned_signer::is_permissioned_signer</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">1.37778</td>
+                    <td style="text-align: right">0.29%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_user_derived_object_address</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">1.0508</td>
+                    <td style="text-align: right">0.22%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::package_manager::get_resource_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.97654</td>
+                    <td style="text-align: right">0.21%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::unchecked_withdraw</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.85266</td>
+                    <td style="text-align: right">0.18%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_dispatch_function</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.78186</td>
+                    <td style="text-align: right">0.17%</td>
+                </tr>
+                <tr>
+                    <td>0x1::account::create_resource_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.76538</td>
+                    <td style="text-align: right">0.16%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_flags</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.71691</td>
+                    <td style="text-align: right">0.15%</td>
+                </tr>
+                <tr>
+                    <td>0x1::from_bcs::to_address</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.68341</td>
+                    <td style="text-align: right">0.15%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::owns</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.64884</td>
+                    <td style="text-align: right">0.14%</td>
+                </tr>
+                <tr>
+                    <td>0x98bc..::pausable::is_paused</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.60304</td>
+                    <td style="text-align: right">0.13%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::owner</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.52592</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_sanity_check</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.5204</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::accrue_fee</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.51377</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::update_twap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.50217</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_a_token_address</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.33716</td>
+                    <td style="text-align: right">0.07%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::math_utils::calculate_linear_interest</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.27682</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::borrow</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.26104</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::create_simple_flashloan_receipt</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.25596</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::function_info::load_module_from_function</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.2422</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::signer::address_of</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.22602</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::set_untransferable</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.20804</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::is_some</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">0.19176</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::set_reserve_virtual_underlying_balance</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.19021</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::fungible_asset_manager::get_metadata</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.18692</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_signer_for_extending</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.17272</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::convert</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.17145</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_virtual_underlying_balance</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.17058</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_from_constructor_ref</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.16166</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray_mul</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.15601</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::get_token_account_with_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.15242</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::lp::get_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.15242</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::amount</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.13964</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_active</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.12507</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_borrowing_enabled</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.12507</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_flash_loan_enabled</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.12507</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_frozen</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.12507</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_paused</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.12507</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray_mul_down</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.111</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_flashloan_premium_total</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10973</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::guid::create</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10187</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::helper::bitwise_negation</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">0.09715</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::math_utils::percent_mul</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.09042</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::disable_ungated_transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08701</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::account::create_signer_with_capability</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08636</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08636</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::asset_metadata</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.08102</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::new_event_handle</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.03983</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::none</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.01828</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.00514</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+            </table>
+            <br />
+            <table data-name="exec_methods_self">
+                <tr>
+                    <th data-sort-asc>Methods (only local gas)</th>
+                    <th style="text-align: right" data-sort-num>Number of Hits</th>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::store_exists</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">30.74928</td>
+                    <td style="text-align: right">6.58%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::address_to_object</td>
+                    <td style="text-align: right">10</td>
+                    <td style="text-align: right">28.91892</td>
+                    <td style="text-align: right">6.18%</td>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::flash_arb::arb_darbitex_to_hyperion</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">21.77681</td>
+                    <td style="text-align: right">4.66%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::borrow</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">20.19385</td>
+                    <td style="text-align: right">4.32%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::balance</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">19.79052</td>
+                    <td style="text-align: right">4.23%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_dispatch_function</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">19.23973</td>
+                    <td style="text-align: right">4.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::withdraw</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">12.72166</td>
+                    <td style="text-align: right">2.72%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">10.78618</td>
+                    <td style="text-align: right">2.31%</td>
+                </tr>
+                <tr>
+                    <td>0x1::features::is_enabled</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">10.71117</td>
+                    <td style="text-align: right">2.29%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">10.62951</td>
+                    <td style="text-align: right">2.27%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::is_atoken</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">10.03243</td>
+                    <td style="text-align: right">2.15%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::blocklistable::is_blocklisted</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.81029</td>
+                    <td style="text-align: right">2.10%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::create_store</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.70216</td>
+                    <td style="text-align: right">2.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::timestamp::now_seconds</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.68005</td>
+                    <td style="text-align: right">2.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_exists</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.66131</td>
+                    <td style="text-align: right">2.07%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table::contains</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">9.65459</td>
+                    <td style="text-align: right">2.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::assert_reserves_initialized</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.46276</td>
+                    <td style="text-align: right">2.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_configuration_by_reserve_data</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.33408</td>
+                    <td style="text-align: right">2.00%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_flashloan_premium_to_protocol</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.31854</td>
+                    <td style="text-align: right">1.99%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::pool_v3::check_protocol_pause</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.29453</td>
+                    <td style="text-align: right">1.99%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::position_blacklist_v2::new_v2</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.29113</td>
+                    <td style="text-align: right">1.99%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::token_base::get_scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.2581</td>
+                    <td style="text-align: right">1.98%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::is_burnt</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.23322</td>
+                    <td style="text-align: right">1.97%</td>
+                </tr>
+                <tr>
+                    <td>0x1::smart_table::contains</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">6.30456</td>
+                    <td style="text-align: right">1.35%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_object_address</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">5.38912</td>
+                    <td style="text-align: right">1.15%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::emit</td>
+                    <td style="text-align: right">12</td>
+                    <td style="text-align: right">4.62244</td>
+                    <td style="text-align: right">0.99%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_with_ref</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">4.3449</td>
+                    <td style="text-align: right">0.93%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_address</td>
+                    <td style="text-align: right">78</td>
+                    <td style="text-align: right">3.97098</td>
+                    <td style="text-align: right">0.85%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_user_derived_object</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.56963</td>
+                    <td style="text-align: right">0.76%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_transfer_ref</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.11075</td>
+                    <td style="text-align: right">0.67%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::deposit</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">2.76984</td>
+                    <td style="text-align: right">0.59%</td>
+                </tr>
+                <tr>
+                    <td>0x1::smart_table::borrow</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">2.33862</td>
+                    <td style="text-align: right">0.50%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_with_ref</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">1.70016</td>
+                    <td style="text-align: right">0.36%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::stablecoin_utils::stablecoin_address</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">1.63808</td>
+                    <td style="text-align: right">0.35%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::pool_v3::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">1.53913</td>
+                    <td style="text-align: right">0.33%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table_with_length::borrow</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">1.45435</td>
+                    <td style="text-align: right">0.31%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::withdraw</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">1.26888</td>
+                    <td style="text-align: right">0.27%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_data</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">1.19638</td>
+                    <td style="text-align: right">0.26%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_sanity_check</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">1.18022</td>
+                    <td style="text-align: right">0.25%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::store_metadata</td>
+                    <td style="text-align: right">8</td>
+                    <td style="text-align: right">1.11928</td>
+                    <td style="text-align: right">0.24%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::create_user_derived_object_address</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">1.0508</td>
+                    <td style="text-align: right">0.22%</td>
+                </tr>
+                <tr>
+                    <td>0x1::account::create_resource_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.68989</td>
+                    <td style="text-align: right">0.15%</td>
+                </tr>
+                <tr>
+                    <td>0x1::from_bcs::to_address</td>
+                    <td style="text-align: right">9</td>
+                    <td style="text-align: right">0.68341</td>
+                    <td style="text-align: right">0.15%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::owns</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.64884</td>
+                    <td style="text-align: right">0.14%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::withdraw_permission_check</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.60353</td>
+                    <td style="text-align: right">0.13%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::execute_flash_loan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.58979</td>
+                    <td style="text-align: right">0.13%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_dispatch_function</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.57822</td>
+                    <td style="text-align: right">0.12%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::owner</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.52592</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::unchecked_withdraw</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.52469</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::accrue_fee</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.51377</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::table_with_length::contains</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.4926</td>
+                    <td style="text-align: right">0.11%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::deposit</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.47308</td>
+                    <td style="text-align: right">0.10%</td>
+                </tr>
+                <tr>
+                    <td>0x98bc..::pausable::assert_not_paused</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.46684</td>
+                    <td style="text-align: right">0.10%</td>
+                </tr>
+                <tr>
+                    <td>0x1::permissioned_signer::check_permission_consume</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.44199</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::deposit_sanity_check</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.41858</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>0x98bc..::pausable::is_paused</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.3994</td>
+                    <td style="text-align: right">0.09%</td>
+                </tr>
+                <tr>
+                    <td>0x5b4b..::adapter::swap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.39082</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_normalized_income_by_reserve_data</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.39061</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0x2656..::pool::update_twap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.38436</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::validation_logic::validate_flashloan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.37389</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::fungible_asset_manager::transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.368</td>
+                    <td style="text-align: right">0.08%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5..::blocklistable::assert_not_blocklisted</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.28644</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::transfer_underlying_to</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.27302</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::transfer_underlying_to</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.26707</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.26296</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::borrow</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.26104</td>
+                    <td style="text-align: right">0.06%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::create_simple_flashloan_receipt</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.25596</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::permissioned_signer::is_permissioned_signer</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.25101</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::function_info::load_module_from_function</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.2422</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_a_token_address</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.23534</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::flashloan_logic::flash_loan_simple</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.23341</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::signer::address_of</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.22602</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_flags</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.21663</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::package_manager::get_resource_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.21116</td>
+                    <td style="text-align: right">0.05%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::set_untransferable</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.20804</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::is_some</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">0.19176</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::assert_token_exists</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">0.18837</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_signer_for_extending</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.17272</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::convert</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.17145</td>
+                    <td style="text-align: right">0.04%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::object_from_constructor_ref</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.16166</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray_mul</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.15601</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::math_utils::calculate_linear_interest</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.15387</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::amount</td>
+                    <td style="text-align: right">4</td>
+                    <td style="text-align: right">0.13964</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::set_reserve_virtual_underlying_balance</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.1393</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_virtual_underlying_balance</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.11967</td>
+                    <td style="text-align: right">0.03%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_reserve_normalized_income</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.11349</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray_mul_down</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.111</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::pool::get_flashloan_premium_total</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10973</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10735</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_active</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10564</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_borrowing_enabled</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10564</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_flash_loan_enabled</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10564</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_frozen</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10564</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::reserve_config::get_paused</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10564</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::get_underlying_asset_address</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10193</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::guid::create</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.10187</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x5310..::helper::bitwise_negation</td>
+                    <td style="text-align: right">5</td>
+                    <td style="text-align: right">0.09715</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::math_utils::percent_mul</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.09042</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::disable_ungated_transfer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08701</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::account::create_signer_with_capability</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08636</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::generate_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.08636</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::asset_metadata</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">0.08102</td>
+                    <td style="text-align: right">0.02%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::a_token_factory::get_token_account_with_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.06606</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a..::lp::get_signer</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.06606</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::fungible_asset_manager::get_metadata</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.06238</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x39dd..::token_base::scaled_total_supply</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.05471</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::event::new_event_handle</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.03983</td>
+                    <td style="text-align: right">0.01%</td>
+                </tr>
+                <tr>
+                    <td>0x1::option::none</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.01828</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+                <tr>
+                    <td>0xc033..::wad_ray_math::ray</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">0.00514</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+            </table>
+        </details>
+
+        <details class="subsection" open>
+            <summary>
+                <h3>IO (269.80482 gas units)</h3>
+            </summary>
+            <p>IO costs cover reading and writing data to storage.</p>
+
+            <h4>State Reads</h4>
+            <table data-name="io_state_reads">
+                <tr>
+                    <th data-sort-asc>Resource Name</th>
+                    <th style="text-align: right" data-sort-num>Number of Hits</th>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td>0x1::object::ObjectCore</td>
+                    <td style="text-align: right">7</td>
+                    <td style="text-align: right">58.27671</td>
+                    <td style="text-align: right">21.60%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::FungibleStore</td>
+                    <td style="text-align: right">6</td>
+                    <td style="text-align: right">49.0679</td>
+                    <td style="text-align: right">18.19%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::DispatchFunctionStore</td>
+                    <td style="text-align: right">2</td>
+                    <td style="text-align: right">18.41762</td>
+                    <td style="text-align: right">6.83%</td>
+                </tr>
+                <tr>
+                    <td>0x1::dispatchable_fungible_asset::TransferRefStore</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x1::features::Features</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::Untransferable</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x1::primary_fungible_store::DeriveRefPod</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x1::timestamp::CurrentTimeMicroseconds</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2::pool::Pool</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::a_token_factory::TokenMap</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::pool::ReserveData</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::pool::ReserveExtendConfiguration</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::pool::Reserves</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb::token_base::TokenBaseState</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c::pool_v3::LiquidityPoolConfigsV3</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x8b4a2c4bb53857c718a04c020b98f8c2e1f99a68b0f57389a8bf5434cd22e05c::position_blacklist_v2::PositionBlackListV2</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0xe5c5befe31ce06bc1f2fd31210988aac08af6d821b039935557a6f14c03471be::blocklistable::BlocklistState</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">9.20881</td>
+                    <td style="text-align: right">3.41%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::TombStone</td>
+                    <td style="text-align: right">3</td>
+                    <td style="text-align: right">9.07155</td>
+                    <td style="text-align: right">3.36%</td>
+                </tr>
+                <tr>
+                    <td>0x1::fungible_asset::ConcurrentFungibleBalance</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.02385</td>
+                    <td style="text-align: right">1.12%</td>
+                </tr>
+                <tr>
+                    <td>0x1::object::Untransferable</td>
+                    <td style="text-align: right">1</td>
+                    <td style="text-align: right">3.02385</td>
+                    <td style="text-align: right">1.12%</td>
+                </tr>
+            </table>
+            <h4>Transaction Write <span class="info-tip"
+                    title="Cost of writing the transaction itself (authentication header + payload) to the ledger history">ⓘ</span>
+            </h4>
+            <table data-name="io_transaction_write">
+                <tr>
+                    <th style="text-align: right" data-sort-num>Cost in Gas Units</th>
+                    <th style="text-align: right" data-sort-num>Percentage</th>
+                </tr>
+                <tr>
+                    <td style="text-align: right">0</td>
+                    <td style="text-align: right">0.00%</td>
+                </tr>
+            </table>
+
+            <h4>Event Writes</h4>
+            (No event writes to show.)
+
+            <h4>State Writes</h4>
+            (No state writes to show.)
+        </details>
+
+        <details class="subsection" open>
+            <summary>
+                <h3>Storage (0 APT)</h3>
+            </summary>
+            <p>The storage fees cover the extended-term storage of states and events and are assessed at a fixed price
+                in APT.</p>
+
+            <h4>Transaction</h4>
+            0 APT
+            <h4>States</h4>
+            (No state changes to show.)
+            <h4>Events</h4>
+            (No events to show.)
+        </details>
+    </details>
+
+    <details open>
+        <summary>
+            <h2>Memory Usage</h2>
+        </summary>
+        Peak memory usage during transaction execution: 13810.<br><br>
+
+        Note: This is measured in abstract value size, which does not map 1:1 to bytes.
+    </details>
+
+    <details open>
+        <summary>
+            <h2>Full Execution Trace</h2>
+        </summary>
+        <script>
+            var traceDimensions = null;
+            function applyTraceDimensions() {
+                if (!traceDimensions) return;
+                const frame = document.getElementById('trace-frame');
+                if (!frame) return;
+                const maxHeight = Math.max(800, window.innerHeight * 0.8);
+                frame.style.height = Math.min(traceDimensions.height, maxHeight) + 'px';
+                frame.style.width = Math.min(traceDimensions.width, window.innerWidth - 40) + 'px';
+            }
+            window.addEventListener('message', function (event) {
+                // Only accept messages from our trace iframe
+                const frame = document.getElementById('trace-frame');
+                if (!frame || event.source !== frame.contentWindow) return;
+
+                if (event.data && event.data.type === 'trace-dimensions') {
+                    // Validate and sanitize dimensions
+                    const width = Math.max(0, Math.min(Number(event.data.width) || 0, 50000));
+                    const height = Math.max(0, Math.min(Number(event.data.height) || 0, 50000));
+                    traceDimensions = { width: width, height: height };
+                    applyTraceDimensions();
+                }
+            });
+            window.addEventListener('resize', applyTraceDimensions);
+        </script>
+        <script>
+            function loadTrace() {
+                const btn = document.getElementById('load-trace-btn');
+                const buttons = document.getElementById('trace-buttons');
+                const container = document.getElementById('trace-container');
+                const frame = document.getElementById('trace-frame');
+
+                btn.textContent = 'Loading...';
+                btn.disabled = true;
+
+                frame.src = 'assets/trace.html';
+                frame.onload = function () {
+                    container.style.display = 'block';
+                    buttons.style.display = 'none';
+                };
+                frame.onerror = function () {
+                    btn.textContent = 'Failed to load trace';
+                };
+            }
+        </script>
+        <p>Large trace (7130 lines)</p>
+        <div id="trace-buttons">
+            <button id="load-trace-btn" onclick="loadTrace()">Load Trace</button>
+            <button onclick="window.open('assets/trace.html', '_blank', 'noopener')" style="margin-left: 5px;">View Raw</button>
+        </div>
+        <div id="trace-container" style="display: none;">
+            <p><button onclick="window.open('assets/trace.html', '_blank', 'noopener')">View Raw</button></p>
+            <iframe id="trace-frame" style="width: 100%; height: 400px; border: 1px solid black;"></iframe>
+        </div>
+    </details>
+
+    <footer>
+        <span>Generated by the Aptos Gas Profiler (b7caf27)</span>
+        <span>2026-04-12 14:07:03 +07:00</span>
+    </footer>
+</body>
+
+</html>

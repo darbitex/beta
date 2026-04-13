@@ -1,0 +1,12 @@
+[package]
+name = "commission-package"
+version = "1.0.0"
+
+[addresses]
+commission = "0x661799897c0d2e94c1de976cb3f0e344672c71871e50188622d1b9192723b44c"
+context = "0x5dd39b261199f6f9232b67c4662248333707328adbc750ba921a8df1599dc31f"
+fee_sharer = "0xcd21066689eb2b346b7cc9f61dd8836693435ef7663725da41075f7a02bae3ae"
+
+[dependencies]
+context = { local = "../context" }
+fee-sharer = { local = "../fee-sharer" }

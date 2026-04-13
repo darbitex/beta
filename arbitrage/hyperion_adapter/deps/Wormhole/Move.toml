@@ -1,0 +1,10 @@
+[package]
+name = "Wormhole"
+version = "0.0.1"
+
+[addresses]
+wormhole = "0x5bc11445584a763c1fa7ed39081f1b920954da14e04b32440cba863d03e19625"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+Deployer = { local = "../Deployer" }

@@ -1,0 +1,8 @@
+[package]
+name = "ChainlinkPlatformSecondary"
+version = "1.0.0"
+[addresses]
+platform_secondary = "0x3bcacb561438c55ce2a9da479df6ab486af55b2fb7070b700df36c097da732b8"
+owner_secondary = "0x3bcacb561438c55ce2a9da479df6ab486af55b2fb7070b700df36c097da732b8"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }

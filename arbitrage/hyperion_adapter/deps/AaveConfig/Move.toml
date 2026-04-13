@@ -1,0 +1,7 @@
+[package]
+name = "AaveConfig"
+version = "1.0.0"
+[addresses]
+aave_config = "0x531069f4741cdead39d70b76e5779863864654fae6db8a752a244ff2f9916c15"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }

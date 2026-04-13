@@ -1,0 +1,13 @@
+[package]
+name = "fee-sharer"
+version = "1.0.0"
+
+[addresses]
+fee_sharer = "0xcd21066689eb2b346b7cc9f61dd8836693435ef7663725da41075f7a02bae3ae"
+fee_sharer_admin = "0x02ca474374306b35932c1390b9df747b6da555ad9b15f1557fb79a7bc97472c8"
+treasury = "0x53e2555324ecbcf9cc400ed61367d7eec98adb2257e5dc076049a5f9446454d8"
+lock = "0xb234295d75ac6cf0b4e07456a442fb0df83afc2f388ecf3e764865029f8e0d40"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+xrion = { local = "../xrion" }

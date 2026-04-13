@@ -1,0 +1,9 @@
+[package]
+name = "Deployer"
+version = "1.0.0"
+
+[addresses]
+deployer = "0xb31e712b26fd295357355f6845e77c888298636609e93bc9b05f0f604049f434"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }

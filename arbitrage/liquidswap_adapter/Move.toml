@@ -1,0 +1,17 @@
+[package]
+name = "LiquidswapAdapter"
+version = "0.1.0"
+upgrade_policy = "compatible"
+authors = ["Rera", "Claude (Anthropic)"]
+
+[addresses]
+liquidswap_adapter = "_"
+darbitex = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2"
+aave_pool = "0x39ddcd9e1a39fa14f25e3f9ec8a86074d05cc0881cbf667df8a6ee70942016fb"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+Liquidswap = { git = "https://github.com/pontem-network/liquidswap.git", rev = "v0.4.4" }
+LiquidswapRouterV2 = { git = "https://github.com/pontem-network/liquidswap.git", subdir = "liquidswap_router_v2", rev = "v0.4.4" }
+DarbitexBeta = { local = "../../contracts" }
+AavePool = { local = "../hyperion_adapter/deps/AavePool" }

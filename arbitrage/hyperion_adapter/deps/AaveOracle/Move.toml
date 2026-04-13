@@ -1,0 +1,11 @@
+[package]
+name = "AaveOracle"
+version = "1.0.0"
+[addresses]
+aave_oracle = "0x249676f3faddb83d64fd101baa3f84a171ae02505d796e3edbf4861038a4b5cc"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+AaveConfig = { local = "../AaveConfig" }
+AaveAcl = { local = "../AaveAcl" }
+ChainlinkDataFeeds = { local = "../ChainlinkDataFeeds" }
+AaveMath = { local = "../AaveMath" }

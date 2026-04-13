@@ -1,0 +1,8 @@
+[package]
+name = "AaveMath"
+version = "1.0.0"
+[addresses]
+aave_math = "0xc0338eea778de2a5348824ddbfcec033c7f7cbe18da6da40869562906b63c78c"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+AaveConfig = { local = "../AaveConfig" }

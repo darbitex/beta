@@ -1,0 +1,17 @@
+[package]
+name = "xrion"
+version = "1.0.0"
+authors = []
+
+[addresses]
+hyperion="0xd6e31e55a750d442bcfb60bbf842d152b102ffa5ac3ae3f2c8b43748c36a3e6f"
+admin="0xd548f6e8ef91c57e7983b1051df686a3753f3d453d37ef781782450e61079fe9"
+
+[dev-addresses]
+hyperion="0x213"
+admin="0x21"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+
+[dev-dependencies]

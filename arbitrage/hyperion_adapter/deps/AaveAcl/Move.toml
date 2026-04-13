@@ -1,0 +1,8 @@
+[package]
+name = "AaveAcl"
+version = "1.0.0"
+[addresses]
+aave_acl = "0x34c3e6af238f3a7fa3f3b0088cbc4b194d21f62e65a15b79ae91364de5a81a3a"
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
+AaveConfig = { local = "../AaveConfig" }

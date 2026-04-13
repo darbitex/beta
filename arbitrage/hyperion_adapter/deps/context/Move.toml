@@ -1,0 +1,9 @@
+[package]
+name = "context"
+version = "1.0.0"
+
+[addresses]
+context = "0x5dd39b261199f6f9232b67c4662248333707328adbc750ba921a8df1599dc31f"
+
+[dependencies]
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-framework.git", subdir = "aptos-framework", rev = "mainnet" }
