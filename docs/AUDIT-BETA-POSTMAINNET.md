@@ -170,6 +170,136 @@ DarbitexBeta is a carefully constructed AMM with evidence of iterative hardening
 
 ---
 
+## Round 2 (post-mainnet) — Kimi K2
+
+**Auditor:** Kimi K2 (Moonshot AI)
+**Date:** 2026-04-13
+**Commit reviewed:** `26493354fa4f22528a81ad73b7f015900a678163`
+**Verdict:** ✅ Conditional approval — 1 MEDIUM / 1 LOW / 1 INFO
+
+### Executive summary (verbatim)
+
+**Overall Assessment**: The codebase demonstrates **mature security practices** with evidence of multiple prior audit rounds. However, I identified **2 new issues** (1 Medium, 1 Low) and **1 informational** observation not documented in the inline audit comments.
+
+### MEDIUM findings
+
+#### M-1 — Missing Deadline Check on `add_liquidity_entry`
+
+**Location:** `pool.move`, line ~1040
+
+The entry wrapper `add_liquidity_entry` lacks deadline protection, exposing LPs to sandwich attacks on liquidity additions.
+
+```move
+public entry fun add_liquidity_entry(
+    provider: &signer,
+    pool_addr: address,
+    amount_a: u64,
+    amount_b: u64,
+    min_shares_out: u64,  // Only slippage protection, no time bound
+) acquires Pool {
+    let _ = add_liquidity(provider, pool_addr, amount_a, amount_b, min_shares_out);
+}
+```
+
+**Impact:** MEV bots can delay transaction inclusion until pool ratio shifts unfavorably, causing LP to deposit at worse rates than expected.
+
+**Recommendation:** Add deadline parameter consistent with router pattern:
+
+```move
+public entry fun add_liquidity_entry(
+    provider: &signer,
+    pool_addr: address,
+    amount_a: u64,
+    amount_b: u64,
+    min_shares_out: u64,
+    deadline: u64,  // Add this
+) acquires Pool {
+    assert!(timestamp::now_seconds() < deadline, E_DEADLINE);
+    // ...
+}
+```
+
+**Status:** Not addressed in prior audits (new finding).
+
+### LOW findings
+
+#### L-1 — Inconsistent Error Code Reuse
+
+**Location:** `pool.move`, multiple locations
+
+Error code `E_INSUFFICIENT_LIQUIDITY` (code 2) is overloaded for semantically different failures:
+
+| Line | Context | Actual Meaning |
+|------|---------|--------------|
+| ~540 | `flash_borrow` | Borrow amount exceeds reserves |
+| ~680 | `remove_liquidity` | Post-burn supply below minimum |
+| ~870 | `flash_repay` | Repayment amount mismatch |
+
+**Impact:** Debugging difficulty; failed transactions return same error code for different root causes.
+
+**Recommendation:** Differentiate error codes:
+```move
+const E_FLASH_BORROW_TOO_LARGE: u64 = 16;
+const E_MIN_LIQUIDITY_LOCKED: u64 = 17;
+const E_REPAY_AMOUNT_MISMATCH: u64 = 18;
+```
+
+### INFORMATIONAL findings
+
+#### I-1 — Hardcoded Constants Limit Flexibility
+
+**Location:** `pool.move`, lines 18-25
+
+Critical parameters are hardcoded with no governance mechanism:
+
+```move
+const SWAP_FEE_BPS: u64 = 1;        // 0.01%
+const FLASH_FEE_BPS: u64 = 1;       // 0.01%
+const HOOK_SPLIT_PCT: u64 = 50;     // 50/50 split
+const EXTRA_FEE_DENOM: u64 = 100_000;
+```
+
+**Risk:** If market conditions require fee adjustments (competitive pressure, MEV mitigation), protocol cannot adapt without module redeployment.
+
+**Recommendation:** Consider factory-governed fee parameters stored in `Factory` struct for future iterations.
+
+### Prior audit verification (verbatim)
+
+| Prior Finding | Verification | Status |
+|-------------|------------|--------|
+| **HIGH-1**: Reserve tracking in flash loans | `flash_borrow` does NOT decrement reserves; only fee accrued in `flash_repay` | ✅ Fixed |
+| **MEDIUM-1**: u128 overflow in swap math | All swap math uses `u256` intermediates before casting to `u64` | ✅ Fixed |
+| **MEDIUM-2**: Reentrancy on fee claims | `pool.locked = true` set in `claim_lp_fees` and `claim_hook_fees` | ✅ Fixed |
+| **MEDIUM-1 (Round 3)**: Multi-hop sandwich | Per-hop `min_out` parameters on all router functions | ✅ Fixed |
+| **LOW-2**: Exact repayment check | `assert!(fungible_asset::amount(&fa_in) == repay_total, ...)` | ✅ Fixed |
+
+### Security scorecard (verbatim)
+
+| Category | Rating | Notes |
+|----------|--------|-------|
+| **Access Control** | ✅ Strong | Multisig-governed, no single admin |
+| **Reentrancy** | ✅ Protected | `locked` flag on all state-mutating functions |
+| **Integer Safety** | ✅ Robust | u256 intermediates, explicit casting |
+| **Economic Security** | ⚠️ Moderate | 1 bps fee may be MEV-extractable on shallow pools |
+| **Composability** | ✅ Excellent | Clean FA-in/FA-out primitives |
+| **Upgradeability** | ❌ None | Move immutability - plan for v2 migration |
+
+### Final recommendation (verbatim)
+
+**Conditional Mainnet Readiness**: ✅ **APPROVED** with minor fixes
+
+**Required before deployment**:
+1. Add deadline parameter to `add_liquidity_entry` (MEDIUM-1)
+2. Consider differentiating error codes for operational clarity (LOW-1)
+
+**Post-deployment monitoring**:
+- Track MEV extraction rates on low-liquidity pools
+- Monitor Hook NFT secondary market pricing vs. fee yield
+
+*Audit conducted on 2026-04-13 against commit `26493354fa4f22528a81ad73b7f015900a678163`*
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
@@ -177,7 +307,6 @@ Additional AI auditors will be distributed the same source. Sections will be app
 - Gemini 2.5 Pro — pending
 - DeepSeek — pending
 - Grok 4 — pending
-- Kimi K2 — pending
 - Qwen — pending
 - ChatGPT (GPT-5) — pending
 - Others TBD
