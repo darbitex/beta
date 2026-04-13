@@ -114,7 +114,7 @@ export function ProtocolPage() {
             <span className="value mono">{explorer(state.admin)}</span>
           </div>
           <div>
-            <span className="label">Treasury (2/3 msig)</span>
+            <span className="label">Treasury (3/5 msig)</span>
             <br />
             <span className="value mono">{explorer(state.treasury)}</span>
           </div>

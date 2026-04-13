@@ -36,12 +36,11 @@ Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` | `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U` | 1.70 MiB | 81 | 2028-04-18 | `/index.html`, `/assets/index-BktrgoBZ.js` |
-| 2 | `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` | `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI` | 435 KiB | 81 | 2028-04-18 | `/assets/index-Dk_OrSqq.css`, `/favicon.svg`, `/manifest.json` |
+| 1 | `0x64eb452541d150191d46c0522edc3072509875c543d86779475613d7828e1f46` | `LIa6r1DiE6ZmWKmygE2gzdCoO-P4V-_JulZxFZx4LcM` | 1.70 MiB | 81 | 2028-04-18 | `/index.html`, `/assets/index-Bw0NLo27.js`, `/assets/index-Dk_OrSqq.css`, `/favicon.svg`, `/manifest.json` |
 
-**Previous owned object IDs (now superseded by shared objects above):**
-- `0x824c7b6f6216699bba57dc59ebc48b893a9156b409aa269025e2d866e2c8a436` → shared as #1
-- `0x76070409f3477f9d2e5f9b7d5a3adaa2acfaafba0363c770ffa2c057988d6b78` → shared as #2
+**Superseded shared quilts (no longer referenced by the site, left to expire naturally — shared blobs cannot be burned):**
+- `0xa8d80bbdfe0c51eab69890b70b22996d4c5a16447795405a93b34b67b8de5ddc` (blob `xCAFOx_4WhLPEJuDjC785vM8fhSVCUHh6bwGulix93U`) — formerly held `/index.html` + old JS
+- `0x107f20be0eb16849e170836bde87d6b2d24ffca35431b819631c9aa8818b770b` (blob `buszfmqC_J1iS-Vpqwt0UwD3X2vylhUe86c87bCWnDI`) — formerly held CSS + favicon + manifest
 
 Site references blobs by content hash (blob ID), so the shared migration was
 zero-downtime and no site-object update was required.
