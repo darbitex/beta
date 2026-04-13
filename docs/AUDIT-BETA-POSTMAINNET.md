@@ -677,12 +677,76 @@ Critical to fix before serious TVL:
 
 ---
 
+## Round 7 (post-mainnet) — Qwen
+
+**Auditor:** Qwen (Alibaba)
+**Date:** 2026-04-13
+**Verdict:** 🟢 LOW overall — 0 HIGH / 0 MEDIUM / 1 LOW / 2 INFO
+
+### Executive summary (verbatim)
+
+The Darbitex Beta source code represents a mature, production-ready AMM primitive on Aptos. The codebase demonstrates rigorous engineering practices, extensive defense-in-depth measures, and explicit incorporation of fixes from multiple prior audit rounds. **No Critical or High severity vulnerabilities were identified.** The contract correctly handles fee accounting, flash loan invariants, reentrancy guards, slippage protection, and deterministic pool creation.
+
+### LOW findings
+
+#### L-1 — Inconsistent Reentrancy Guard in `add_liquidity`
+
+**Location:** `pool.move::add_liquidity`
+
+All mutating pool functions (`swap`, `remove_liquidity`, `claim_lp_fees`, `claim_hook_fees`, `flash_borrow`, `flash_repay`) explicitly set `pool.locked = true` at entry and `false` at exit. `add_liquidity` checks `!pool.locked` but does not toggle it.
+
+**Impact:** Currently negligible. Aptos' `primary_fungible_store` does not support callback hooks, making synchronous reentrancy impossible today. However, if Aptos introduces FA dispatch hooks in a future framework upgrade, this function would become vulnerable to reentrancy.
+
+**Recommendation:** Add `pool.locked = true;` after the `assert!(!pool.locked, E_LOCKED);` check, and `pool.locked = false;` before the final return. This aligns with the defense-in-depth philosophy already documented in `claim_lp_fees`.
+
+> **Note (in-session observation):** Qwen's claim that `remove_liquidity` sets the lock is factually wrong — fresh Claude R1 (post-mainnet) independently flagged `remove_liquidity` as missing the exact same lock bracket. Together, the two findings reveal that **both** `add_liquidity` and `remove_liquidity` have the defense-in-depth gap that `claim_*` functions got in pre-mainnet R2.
+
+### INFORMATIONAL findings
+
+#### I-1 — Hardcoded Multisig & Revenue Addresses
+
+**Location:** `pool_factory.move` (`TREASURY_ADDR`, `ADMIN_ADDR`, `REVENUE_ADDR`)
+
+Critical operational addresses are hardcoded as constants. While acceptable for a beta, key compromise or multisig rotation would require a full package upgrade. Operational flexibility is reduced.
+
+**Recommendation:** For v1.0+, consider a `GovernanceConfig` object stored at `@darbitex` that holds these addresses. The factory could borrow it at runtime, allowing admin rotation without code upgrades.
+
+#### I-2 — `schema_version` Unused for Upgrade Migration
+
+**Location:** All core structs (`Pool`, `LpPosition`, `HookNFT`, `Factory`)
+
+Each struct includes `schema_version: u8` and `_reserved: vector<u8>`, which is excellent for `compatible` upgrade padding. However, no version-checking or migration logic exists. Document a migration strategy for future upgrades.
+
+### Positive security controls (verbatim)
+
+1. **Flash loan solvency invariant:** `flash_borrow` intentionally leaves reserves untouched. `flash_repay` deposits `amount + fee` into the store but routes the fee only to LP/Hook accumulators, never to `reserve_a/b`. The `k_after >= k_before` check acts as a robust safety net.
+2. **Per-hop sandwich protection:** `swap_2hop_composable` and `swap_3hop_composable` enforce `min_out` on every intermediate hop, not just the final output.
+3. **Dust swap fee floor:** `extra_fee = if (extra_fee_raw == 0 && amount_in > 0) { 1 } else { extra_fee_raw };` ensures hook fee buckets accumulate revenue even on sub-basis-point swaps.
+4. **Deterministic canonical pool creation:** Uses `object::create_named_object` with `POOL_SEED_PREFIX || bcs(meta_a) || bcs(meta_b)`. Duplicate pair creation aborts at the framework level.
+5. **LP fee accounting architecture:** Global `lp_fee_per_share` accumulator + per-position `fee_debt` snapshots. Avoids O(N) fee distribution and prevents double-counting.
+6. **Comprehensive test coverage:** Happy paths, slippage aborts, buffer-return logic, TWAP accumulation, flash loan strict equality, hook soulbound enforcement, historical regression cases.
+
+### Recommendations table (verbatim)
+
+| Area | Recommendation | Priority |
+|------|----------------|----------|
+| `add_liquidity` | Add `pool.locked = true/false` toggle for future-proofing against FA callback hooks. | Low |
+| Governance | Replace hardcoded addresses with a fetchable `GovernanceConfig` object for key rotation. | Low |
+| TWAP Oracle | Document expected latency & block-time assumptions for oracle consumers. | Info |
+| Event Indexing | Ensure off-chain indexers parse `Object<LpPosition>` and `Object<HookNFT>` addresses correctly. | Info |
+| Upgrade Planning | Draft a migration script template for `compatible` upgrades. | Info |
+
+### Conclusion (verbatim)
+
+The Darbitex Beta codebase is **secure, well-architected, and production-ready** for its current scope. With the minor defense-in-depth adjustment to `add_liquidity` and consideration of a governance config object for future operational flexibility, the protocol is well-positioned for mainnet scaling. No code changes are required prior to continued operation.
+
+---
+
 ## Pending auditors (post-mainnet cycle)
 
 Additional AI auditors will be distributed the same source. Sections will be appended to this document as findings come in, each as a separate commit under the auditor's own git author name:
 
 - DeepSeek — pending
-- Qwen — pending
 - Others TBD
 
 Consolidated triage, false-positive rebuttals, and fix commits will be batched at the end of the cycle — not per-auditor.
