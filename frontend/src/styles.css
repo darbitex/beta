@@ -275,6 +275,15 @@ a:hover { text-decoration: underline; }
 .slippage-apply:hover { background: #222; }
 .slippage-hint { font-size: 10px; color: #555; line-height: 1.4; }
 
+/* Log export button */
+.log-btn {
+  background: #1a1a1a; border: 1px solid #333; color: #666;
+  padding: 8px 10px; border-radius: 8px;
+  font-family: inherit; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.5px; cursor: pointer;
+}
+.log-btn:hover { background: #222; color: #ff8800; }
+
 /* Mode tabs (Swap / Aggregator) */
 .mode-tabs {
   display: flex; gap: 4px; margin-bottom: 16px;

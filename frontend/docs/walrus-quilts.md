@@ -64,7 +64,7 @@ Last verified: **2026-04-13** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0xd227e1c00b283f3aab216a7b9310744427cc5a64d751ad80d90680270fea3018` | `GF7VKQ21zRXQX4F9-7a6kTqIXiYSt7TAyDhPh5W5v3c` | 1.70 MiB | 33 | ~2026-06-29 | `/index.html`, `/assets/index-ZLMvfIcp.js`, `/assets/index-D4oHF-9x.css`, `/favicon.svg`, `/manifest.json` |
+| 1 | `0xabedf95a39d9f66c9be059cfc169f28e1f678e72de07283c87c753d9add13cb2` | (see latest deploy) | 1.70 MiB | 33 | ~2026-06-29 | bundle `index-CM36zo2x.js` + CSS `index-CnUn-BJD.css` + index.html + favicon + manifest |
 
 Short lease (epoch 33) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
 

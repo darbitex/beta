@@ -1,5 +1,6 @@
 import { TOKENS, type TokenConfig } from "../config";
 import { normMeta, rotatedGetResource } from "./client";
+import { logWarn } from "./logger";
 
 const TOKEN_CACHE: Record<string, TokenConfig> = {};
 
@@ -27,7 +28,8 @@ export async function getTokenInfo(meta: string): Promise<TokenConfig> {
     };
     TOKEN_CACHE[key] = info;
     return info;
-  } catch {
+  } catch (e) {
+    logWarn("getTokenInfo", `fallback for ${meta}`, e);
     const info: TokenConfig = { meta, symbol: `${meta.slice(0, 6)}...`, decimals: 0 };
     TOKEN_CACHE[key] = info;
     return info;

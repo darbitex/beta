@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { exportLogs } from "../chain/logger";
 import { PACKAGE } from "../config";
 import { ConnectButton } from "./ConnectButton";
 import { SlippageButton } from "./SlippageButton";
@@ -21,6 +22,15 @@ export function Layout() {
           </a>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="log-btn"
+            onClick={exportLogs}
+            title="Export diagnostic logs (Ctrl+Shift+L)"
+            aria-label="Export logs"
+          >
+            LOG
+          </button>
           <SlippageButton />
           <ConnectButton />
         </div>

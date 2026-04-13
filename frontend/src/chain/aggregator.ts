@@ -5,6 +5,7 @@ import {
   type TokenConfig,
 } from "../config";
 import { viewFn } from "./client";
+import { logError } from "./logger";
 
 // Which venue a quote came from.
 export type Venue = "darbitex" | "hyperion" | "liquidswap" | "cellana";
@@ -55,7 +56,8 @@ async function quoteDarbitex(
     const out = BigInt(String(res[0] ?? "0"));
     if (out === 0n) return null;
     return { venue: "darbitex", darbitexPool: poolAddr, amountOutRaw: out };
-  } catch {
+  } catch (e) {
+    logError("quoteDarbitex", `failed pool=${poolAddr} amount=${amountInRaw} aToB=${aToB}`, e);
     return null;
   }
 }
