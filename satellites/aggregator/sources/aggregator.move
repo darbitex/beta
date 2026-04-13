@@ -13,7 +13,7 @@
 module darbitex_aggregator::aggregator {
     use std::signer;
     use aptos_framework::fungible_asset::Metadata;
-    use aptos_framework::object::Object;
+    use aptos_framework::object::{Self, Object};
     use aptos_framework::primary_fungible_store;
     use aptos_framework::timestamp;
 
@@ -58,6 +58,36 @@ module darbitex_aggregator::aggregator {
     // Frontend calls per-pair with hardcoded CoinType generics.
     public fun quote_liquidswap_stable<X, Y>(amount_in: u64): u64 {
         liquidswap::get_amount_out_stable<X, Y>(amount_in)
+    }
+
+    // ===== Hyperion pool discovery views =====
+    // These wrap hyperion_adapter::adapter::{pool_exists, get_pool, reserves}
+    // as #[view] so the frontend can cheap-query them. The underlying adapter
+    // functions are plain public fun (not #[view]-annotated).
+
+    #[view]
+    public fun hyperion_pool_exists(
+        meta_a: Object<Metadata>,
+        meta_b: Object<Metadata>,
+        fee_tier: u8,
+    ): bool {
+        hyperion::pool_exists(meta_a, meta_b, fee_tier)
+    }
+
+    #[view]
+    public fun hyperion_get_pool(
+        meta_a: Object<Metadata>,
+        meta_b: Object<Metadata>,
+        fee_tier: u8,
+    ): address {
+        object::object_address(&hyperion::get_pool(meta_a, meta_b, fee_tier))
+    }
+
+    #[view]
+    public fun hyperion_reserves(
+        pool: Object<pool_v3::LiquidityPoolV3>,
+    ): (u64, u64) {
+        hyperion::reserves(pool)
     }
 
     // ===== Entries =====
