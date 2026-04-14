@@ -6,6 +6,18 @@ export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c77
 // thalaswap_v2::pool preview/swap with FA-native interface. 3/5 multisig.
 // See `darbitex_thala_adapter` memory for deployment record + pool registry.
 export const THALA_ADAPTER_PACKAGE = "0x583d93de79a3f175f1e3751513b2be767f097376f22ea2e7a5aac331e60f206f";
+// Arb keeper satellite — permissionless flash-loan arb executor across
+// Darbitex / Hyperion / Thala. 2-leg (execute_arb) + 3-leg triangular
+// (execute_triangular_arb) entry functions. Splits 95% caller / 5%
+// treasury on-chain. Published to owner1 EOA (single-sig), compat
+// upgrade policy. See `darbitex_arb_keeper` repo for source.
+export const ARB_KEEPER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6ba13452184d794da4658a4814efd30";
+// Keeper venue enum — must match sources/keeper.move `VENUE_*` constants
+export const VENUE_ID = {
+  darbitex: 0,
+  hyperion: 1,
+  thala: 2,
+} as const;
 
 // Geomi (Aptos Labs developer portal) frontend API key. Domain-restricted
 // server-side: the key is only accepted when the `Origin` header matches

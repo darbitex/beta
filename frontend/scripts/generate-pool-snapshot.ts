@@ -22,17 +22,32 @@ const THALA_ADAPTER =
   "0x583d93de79a3f175f1e3751513b2be767f097376f22ea2e7a5aac331e60f206f";
 const RPC = "https://api.mainnet.aptoslabs.com/v1";
 
+// Geomi frontend key — routes build-time RPC calls through our dedicated
+// quota bucket instead of the anonymous per-IP pool, so `npm run snapshot`
+// doesn't fight with live frontend traffic or past-scan exhaustion on the
+// build machine. Same key as `src/config.ts::GEOMI_API_KEY`, duplicated
+// here because this script runs outside the Vite bundle.
+const GEOMI_API_KEY = "AG-95EUWG1FUEIKI1QAG1EAAWFRFVQNOJURS";
+const RPC_HEADERS: Record<string, string> = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${GEOMI_API_KEY}`,
+  // Geomi enforces an Origin whitelist; set to the live site.
+  Origin: "https://darbitex.wal.app",
+};
+
 // Curated list of Thala V2 pool addresses to include in the snapshot. The
 // frontend aggregator uses these as a pre-filter: only pools whose pair
 // matches the user's selected tokens are quoted. Adding a new Thala pool
 // to this list and running `npm run snapshot` makes it discoverable without
 // any Move or TypeScript changes.
 const THALA_POOL_SEEDS: string[] = [
-  // APT / nUSDC weighted — primary liquid pair
-  "0xb4a8b8462b4423780d6ee256f3a9a3b9ece5d9440d614f7ab2bfa4556aa4f69d",
+  // APT / nUSDC weighted — 5 bps pool (swapped from 30-bps 0xb4a8b8...
+  // on 2026-04-14). Verified liquid: 1M APT → 8704 USDC (same depth
+  // as Hyperion tier 1, 6x cheaper fees than the old 30-bps variant).
+  "0xa928222429caf1924c944973c2cd9fc306ec41152ba4de27a001327021a4dff7",
   // APT / USDt weighted
   "0x99d34f16193e251af236d5a5c3114fa54e22ca512280317eda2f8faf1514c395",
-  // APT / lzUSDC weighted
+  // APT / lzUSDC weighted — 5 bps
   "0x253f970b6a6f071b5fb63d3f16ea2685431a078f62bf98978b37bd0d169ff7c5",
 ];
 
@@ -45,7 +60,7 @@ async function view<T = unknown>(
   const pkg = packageOverride ?? PACKAGE;
   const res = await fetch(`${RPC}/view`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: RPC_HEADERS,
     body: JSON.stringify({
       function: `${pkg}::${fn}`,
       type_arguments: typeArgs,
@@ -65,6 +80,7 @@ async function getResource<T = unknown>(
 ): Promise<T | null> {
   const res = await fetch(
     `${RPC}/accounts/${addr}/resource/${encodeURIComponent(type)}`,
+    { headers: RPC_HEADERS },
   );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`resource ${addr} failed: ${res.status}`);

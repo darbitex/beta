@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-04-14T01:51:15.388Z",
+  "generated_at": "2026-04-14T04:35:39.307Z",
   "package": "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2",
   "pool_count": 4,
   "pools": [
     {
       "addr": "0xe0824bf4e29f430266bc93a1a16f62b26aef82a7a1029b2a6562e31f6bf59256",
-      "reserve_a": "410158329",
-      "reserve_b": "3413147",
+      "reserve_a": "400635831",
+      "reserve_b": "3494273",
       "lp_supply": "37415627",
       "meta_a": "0xa",
       "meta_b": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
@@ -25,8 +25,8 @@
     },
     {
       "addr": "0x69a3913973d7009aa687d2f542363690937da74ea94c953853dd81004db0e2af",
-      "reserve_a": "415882498",
-      "reserve_b": "3366168",
+      "reserve_a": "402872017",
+      "reserve_b": "3474876",
       "lp_supply": "37415627",
       "meta_a": "0xa",
       "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
@@ -45,8 +45,8 @@
     },
     {
       "addr": "0xa540e3e43e91f46fd0d8e03bd57d14491244dbbc511b23be53dbe3611894329e",
-      "reserve_a": "1070000",
-      "reserve_b": "1070000",
+      "reserve_a": "1078741",
+      "reserve_b": "1061330",
       "lp_supply": "1070000",
       "meta_a": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
       "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
@@ -65,8 +65,8 @@
     },
     {
       "addr": "0xa2b520811ba535a857ecc54ab504188799f67e767674fb5141105063889c5af",
-      "reserve_a": "231000",
-      "reserve_b": "231000",
+      "reserve_a": "241476",
+      "reserve_b": "220979",
       "lp_supply": "231000",
       "meta_a": "0x2b3be0a97a73c87ff62cbdd36837a9fb5bbd1d7f06a73b7ed62ec15c5326c1b8",
       "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
@@ -87,7 +87,7 @@
   "thala_adapter": "0x583d93de79a3f175f1e3751513b2be767f097376f22ea2e7a5aac331e60f206f",
   "thala_pools": [
     {
-      "addr": "0xb4a8b8462b4423780d6ee256f3a9a3b9ece5d9440d614f7ab2bfa4556aa4f69d",
+      "addr": "0xa928222429caf1924c944973c2cd9fc306ec41152ba4de27a001327021a4dff7",
       "assets": [
         "0xa",
         "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b"

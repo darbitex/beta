@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/Toast";
 import { AboutPage } from "./pages/About";
+import { ArbPage } from "./pages/Arb";
 import { HooksPage } from "./pages/Hooks";
 import { PoolsPage } from "./pages/Pools";
 import { PortfolioPage } from "./pages/Portfolio";
@@ -17,6 +18,7 @@ export function App() {
           <Routes>
             <Route element={<Layout />}>
               <Route index element={<SwapPage />} />
+              <Route path="arb" element={<ArbPage />} />
               <Route path="pools" element={<PoolsPage />} />
               <Route path="hooks" element={<HooksPage />} />
               <Route path="portfolio" element={<PortfolioPage />} />
