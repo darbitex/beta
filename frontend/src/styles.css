@@ -62,6 +62,7 @@ a:hover { text-decoration: underline; }
 
 /* Layout */
 .container { max-width: 480px; margin: 0 auto; padding: 20px; }
+.container.arb-wide { max-width: 820px; }
 
 /* Cards */
 .card {

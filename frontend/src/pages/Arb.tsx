@@ -184,7 +184,7 @@ export function ArbPage() {
   const sessionAge = nowTick - sessionStart.current;
 
   return (
-    <div className="container">
+    <div className="container arb-wide">
       <div className="card">
         <div className="arb-header">
           <div>

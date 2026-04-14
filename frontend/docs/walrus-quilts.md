@@ -64,11 +64,12 @@ Last verified: **2026-04-14** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0xcfc2b90452316475fd2b4d98e8af8296013c9619f6fc9d100e6e5bd7cbaa6a75` | `ILViYhG0nXfsBqzqI6eyh-_v6YN3bWq91SNegyfr1aM` | 1.70 MiB | 33 | ~2026-06-22 | bundle `index-DXgQ0_Ak.js` + CSS + index.html + favicon + manifest + pools-snapshot.json (4 Darbitex + 3 Thala pools) + **Thala venue re-wired via adapter + subscribe-based refresh propagation** |
+| 1 | `0xa2e5789a5d9c92fd6b14a2053b05391b07ff233b98f393d86070ffefd91fa8aa` | `TZTFujJL4tmzvKsWQRxn6o1J9iAOSP8YC6z1Bjrl5dQ` | 1.70 MiB | 33 | ~2026-06-22 | bundle `index-Dt8zkvYJ.js` + CSS `index-B9w2ETRr.css` + index.html + pools-snapshot.json — **Arb page fix: Fire button clipped by 480px container (`.container.arb-wide` = 820px max)** |
 
 Short lease (epoch 33) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
 
 **Superseded shared quilts (orphaned, not funded, left to expire naturally — shared blobs cannot be burned):**
+- `0xcfc2b90452316475fd2b4d98e8af8296013c9619f6fc9d100e6e5bd7cbaa6a75` (blob `ILViYhG0nXfsBqzqI6eyh-_v6YN3bWq91SNegyfr1aM`) — bundle from 2026-04-14 Thala adapter re-wire deploy. **Not funded**, zero WAL loss. *(Note: replaced by an intermediate unregistered owned-blob deploy `Tyoz1vNxTp2I...` / `0x025b55b2...` which was burned on 2026-04-14 when the current deploy landed.)*
 - `0xbdc1ebd74a53fb8db5ba2f03a1c0ab07dd57a2dbc388e35afb3f9ac3e49a8971` (blob `t_JeOHHHzk9R-6g9-ajFUsi5DJn_HA2zMWaeJNKrins`) — bundle from 2026-04-14 Geomi-wire deploy (`index-B1kV80M9.js`). **Not funded**, zero WAL loss.
 - `0x3df7271cb4549910330e75498e65b15b5af4fd2283ec2fd8a2e22f2199d97701` (blob `KQFt6ANUDStwYrLtqe6r3eGHAh7HV0MSxIgEYtG6Dsk`) — bundle from 2026-04-14 pool-snapshot deploy (`index-BJZaWsfi.js`). **Not funded**, zero WAL loss.
 - `0xf512f4296a888c4439b88d4398f2e6b19815d355b09b95746359526d2b8abe83` (blob `7HLH0g_9yYf6uaMi98EYKXaEFYSkJKPjMVyiF7bjKms`) — bundle from 2026-04-14 RPC-budget-diet deploy (`index-PXRIf65S.js`). **Not funded**, zero WAL loss.
