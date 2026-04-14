@@ -1,25 +1,26 @@
 import { Aptos, AptosConfig, type InputViewFunctionData, type MoveValue } from "@aptos-labs/ts-sdk";
-import { NETWORK, PACKAGE, RPC_LIST } from "../config";
+import { NETWORK, PACKAGE, RPC_LIST, type RpcEndpoint } from "../config";
 
 // Power-user escape hatch: if localStorage has a `darbitex.rpcOverride` key
-// (JSON array of URLs), those endpoints are prepended to the pool. Intended
-// for devs whose IP is heavily rate-limited on Aptos Labs public — they can
-// set their own QuickNode/Alchemy URL in the browser console and it will
-// never leak into the public bundle or be seen by other users.
+// (JSON array of URLs), those endpoints are prepended to the pool as
+// unauthenticated clients. Intended for devs who want to plug in their own
+// QuickNode/Alchemy URL without editing the bundled config.
 //
 //   localStorage.setItem('darbitex.rpcOverride', JSON.stringify([
 //     "https://my-quicknode-url.aptos-mainnet.quiknode.pro/KEY/v1",
 //   ]));
 //
 // Then reload. The override clients are tried first in rotation.
-function readRpcOverride(): string[] {
+function readRpcOverride(): RpcEndpoint[] {
   if (typeof localStorage === "undefined") return [];
   try {
     const raw = localStorage.getItem("darbitex.rpcOverride");
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.filter((x): x is string => typeof x === "string" && x.startsWith("http"));
+      return parsed
+        .filter((x): x is string => typeof x === "string" && x.startsWith("http"))
+        .map((url) => ({ url }));
     }
   } catch {
     // ignore malformed override
@@ -27,13 +28,20 @@ function readRpcOverride(): string[] {
   return [];
 }
 
-const effectiveRpcList: string[] = [...readRpcOverride(), ...RPC_LIST];
+const effectiveRpcList: RpcEndpoint[] = [...readRpcOverride(), ...RPC_LIST];
 
-// One Aptos client per RPC in the pool. Round-robin rotation per call spreads
-// load across endpoints and preserves the per-IP budget model (each user still
-// hits all endpoints from their own IP, no shared quota).
+// One Aptos client per RPC endpoint. Each client may have its own set of
+// default headers (e.g. Geomi's Bearer token) so rotation across endpoints
+// with different auth profiles works seamlessly.
 const aptosClients: Aptos[] = effectiveRpcList.map(
-  (rpc) => new Aptos(new AptosConfig({ network: NETWORK, fullnode: rpc })),
+  (ep) =>
+    new Aptos(
+      new AptosConfig({
+        network: NETWORK,
+        fullnode: ep.url,
+        clientConfig: ep.headers ? { HEADERS: ep.headers } : undefined,
+      }),
+    ),
 );
 
 // Per-provider cooldown state with exponential backoff. First 429/503 gives

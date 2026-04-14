@@ -87,6 +87,74 @@ function extractInner(x: unknown): string {
   return String(x);
 }
 
+// Subscribe/notify hooks so mounted pages can receive fresh pool data
+// when either (a) a manual refresh button is clicked, or (b) the boot-time
+// background count check detects a new on-chain pool. Each page's useEffect
+// registers a setPools callback; refreshPools() pushes new state to all.
+type PoolSubscriber = (pools: Pool[]) => void;
+const poolSubscribers = new Set<PoolSubscriber>();
+
+export function subscribePools(cb: PoolSubscriber): () => void {
+  poolSubscribers.add(cb);
+  return () => {
+    poolSubscribers.delete(cb);
+  };
+}
+
+function notifyPoolSubscribers(pools: Pool[]): void {
+  for (const cb of poolSubscribers) {
+    try {
+      cb(pools);
+    } catch (e) {
+      logWarn("pools", "subscriber threw during notify", e);
+    }
+  }
+}
+
+export function invalidatePoolCache(): void {
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem(POOL_CACHE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// Nuke caches, force fresh chain load, broadcast new state to every
+// subscribed page. Used by the manual refresh button and the background
+// count-mismatch check.
+export async function refreshPools(): Promise<Pool[]> {
+  invalidatePoolCache();
+  const fresh = await loadPools({ fresh: true });
+  notifyPoolSubscribers(fresh);
+  return fresh;
+}
+
+// Background sanity check: fire a single get_all_pools (1 RPC call) and
+// compare the on-chain pool count against what we cached from the snapshot.
+// If the chain has more (or fewer) pools, triggers a full refresh. Designed
+// to run once ~5s after page load, opt-in, silent on failure.
+export async function backgroundPoolCountCheck(): Promise<boolean> {
+  try {
+    const res = await viewFn<[string[]]>("pool_factory::get_all_pools");
+    const chainCount = (res[0] ?? []).length;
+    const cached = readCache();
+    const cachedCount = cached?.length ?? 0;
+    if (chainCount !== cachedCount) {
+      logInfo(
+        "pools",
+        `background check: chain=${chainCount} cached=${cachedCount}, refreshing`,
+      );
+      await refreshPools();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // Load pools with a 3-tier cache:
 //   1. localStorage (warm, <60s)     — zero network
 //   2. /pools-snapshot.json (cold)   — zero RPC, served from Walrus bundle

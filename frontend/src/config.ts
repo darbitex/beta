@@ -3,33 +3,49 @@ import { Network } from "@aptos-labs/ts-sdk";
 export const PACKAGE = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
 export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47";
 
-// Public Aptos RPC pool — verified 2026-04-13 for chain_id=1 and POST /view.
-// Client rotates round-robin per request to spread load and improve resilience.
-// All endpoints are free, unauthenticated, and per-IP rate-limited on the
-// caller side (preserves the decentralized "each user brings own budget"
-// model — no shared paid quota).
-// Polkachu was dropped 2026-04-13: their CORS preflight returns two
-// `Access-Control-Allow-Origin` headers (specific + wildcard), which
-// violates the spec and causes browsers to reject the response with
-// "TypeError: Failed to fetch". Aptos Labs' three hostnames have clean
-// CORS and are currently the only viable public browser-callable options.
+// Geomi (Aptos Labs developer portal) frontend API key. Domain-restricted
+// server-side: the key is only accepted when the `Origin` header matches
+// one of the whitelisted URLs on the Geomi dashboard (currently
+// darbitex.wal.app + localhost variants). A leaked key from the public
+// bundle is therefore useless to any attacker who can't fake the Origin
+// from a browser — which is impossible in modern browsers because fetch()
+// sets Origin automatically from the actual page origin.
 //
-// 3rd-party RPC landscape verified 2026-04-14 (all failed): Nodit,
-// NodeReal, BlastAPI, AllThatNode → require API key; Ankr, Tatum,
-// publicnode.com → different API shape (JSON-RPC not REST); llamarpc,
-// chainbase, omnia → DNS/reachability failures. No viable browser-
-// callable 3rd-party public Aptos mainnet REST endpoint exists. The
-// real fix is a CloudFlare Worker proxy (see roadmap) — these 3 Aptos
-// Labs hostnames are the interim best-effort.
-export const RPC_LIST: string[] = [
-  "https://fullnode.mainnet.aptoslabs.com/v1",
-  "https://api.mainnet.aptoslabs.com/v1",
-  "https://mainnet.aptoslabs.com/v1",
+// Rate limit on this key: 200 req / 5 min per IP on the Node API upstream
+// (see Geomi dashboard > Per-IP Rate Limit Rules). Free tier is $10/mo in
+// compute credits; at current darbitex scale this is effectively unlimited.
+//
+// Fallback: if Geomi ever returns 401/5xx, rotatedView falls through to
+// the anonymous public endpoints below. Degraded UX (rate-limited), but
+// functional, until Geomi recovers.
+export const GEOMI_API_KEY = "AG-95EUWG1FUEIKI1QAG1EAAWFRFVQNOJURS";
+
+export type RpcEndpoint = {
+  url: string;
+  // When set, these headers are baked into the Aptos SDK client config for
+  // this endpoint. Used to inject Geomi's `Authorization: Bearer <key>`.
+  headers?: Record<string, string>;
+};
+
+// Primary: Geomi-authenticated Node API. Our own quota bucket (~8M
+// calls/month free tier), breaks the anonymous per-IP dependency that
+// caused the 2026-04-11..14 rate-limit storms.
+//
+// Fallbacks: the same Aptos Labs hostnames as anonymous public access.
+// These are worse under load (IP-penalized) but preserve graceful
+// degradation if Geomi goes down.
+export const RPC_LIST: RpcEndpoint[] = [
+  {
+    url: "https://api.mainnet.aptoslabs.com/v1",
+    headers: { Authorization: `Bearer ${GEOMI_API_KEY}` },
+  },
+  { url: "https://fullnode.mainnet.aptoslabs.com/v1" },
+  { url: "https://mainnet.aptoslabs.com/v1" },
 ];
 
-// Legacy single-RPC export; points to the first entry. Some consumers may
-// still import this directly. Prefer RPC_LIST + rotation for new code.
-export const RPC = RPC_LIST[0];
+// Legacy single-RPC export; points to the first entry URL. Some consumers
+// may still import this directly. Prefer RPC_LIST + rotation for new code.
+export const RPC = RPC_LIST[0].url;
 
 export const NETWORK = Network.MAINNET;
 export const SLIPPAGE = 0.005;

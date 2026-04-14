@@ -64,11 +64,12 @@ Last verified: **2026-04-14** (Walrus mainnet epoch **28**, epoch duration **14 
 
 | # | Shared Object ID | Blob ID (content hash) | Size | Exp. epoch | Exp. date | Resources |
 |---|---|---|---|---|---|---|
-| 1 | `0x3df7271cb4549910330e75498e65b15b5af4fd2283ec2fd8a2e22f2199d97701` | `KQFt6ANUDStwYrLtqe6r3eGHAh7HV0MSxIgEYtG6Dsk` | 1.70 MiB | 33 | ~2026-06-22 | bundle `index-BJZaWsfi.js` + CSS + index.html + favicon + manifest + **pools-snapshot.json** |
+| 1 | `0xbdc1ebd74a53fb8db5ba2f03a1c0ab07dd57a2dbc388e35afb3f9ac3e49a8971` | `t_JeOHHHzk9R-6g9-ajFUsi5DJn_HA2zMWaeJNKrins` | 1.70 MiB | 33 | ~2026-06-22 | bundle `index-B1kV80M9.js` + CSS + index.html + favicon + manifest + pools-snapshot.json + **Geomi frontend key wired** |
 
 Short lease (epoch 33) per the post-incident SOP — frontend still iterating, no public funding attached. Will be superseded on the next deploy; don't fund.
 
 **Superseded shared quilts (orphaned, not funded, left to expire naturally — shared blobs cannot be burned):**
+- `0x3df7271cb4549910330e75498e65b15b5af4fd2283ec2fd8a2e22f2199d97701` (blob `KQFt6ANUDStwYrLtqe6r3eGHAh7HV0MSxIgEYtG6Dsk`) — bundle from 2026-04-14 pool-snapshot deploy (`index-BJZaWsfi.js`). **Not funded**, zero WAL loss.
 - `0xf512f4296a888c4439b88d4398f2e6b19815d355b09b95746359526d2b8abe83` (blob `7HLH0g_9yYf6uaMi98EYKXaEFYSkJKPjMVyiF7bjKms`) — bundle from 2026-04-14 RPC-budget-diet deploy (`index-PXRIf65S.js`). **Not funded**, zero WAL loss.
 - `0x5361ba25189caa1278cad29e91bec2c624717a26db2e5fdab3c5ee83555aae33` (blob `7Xt6iny_rnqzdSr21qvNnAG2jeSa2PO4AAa1FsUVATs`) — bundle from 2026-04-14 Thala-venue-removal deploy (`index-GiIyZW4e.js`). **Not funded**, zero WAL loss.
 - `0x3bf1eb1483390e82cbb2e00afe69fddb8c7c2a0a94606ee17347f8a8d0a3186e` (blob `SfKgzCqgT0el4bO6TsRJ1nk8g4vYFTZIRiunWdtzZmU`) — full bundle from the 2026-04-13 Thala-quote-bug-fix deploy (`index-BYfk1RoU.js`). **Not funded**, zero WAL loss.

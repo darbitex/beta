@@ -1,11 +1,25 @@
+import { useEffect } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { backgroundPoolCountCheck } from "../chain/pools";
 import { PACKAGE } from "../config";
 import { ConnectButton } from "./ConnectButton";
+import { RefreshButton } from "./RefreshButton";
 import { RpcOverrideButton } from "./RpcOverrideButton";
 import { SlippageButton } from "./SlippageButton";
 
 export function Layout() {
   const explorer = `https://explorer.aptoslabs.com/account/${PACKAGE}/modules/code/pool_factory?network=mainnet`;
+  // Opt-in freshness: 5s after mount, fire ONE `get_all_pools` call and
+  // compare the on-chain pool count against the snapshot/cache. If a new
+  // pool was created since the last deploy, trigger a full refresh in
+  // background. Silent on failure — user still sees the stale snapshot
+  // and can manually refresh via the header button.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      backgroundPoolCountCheck().catch(() => {});
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
   return (
     <>
       <div className="header">
@@ -17,6 +31,7 @@ export function Layout() {
           Darbitex
         </div>
         <div className="header-actions">
+          <RefreshButton />
           <RpcOverrideButton />
           <SlippageButton />
           <ConnectButton />
