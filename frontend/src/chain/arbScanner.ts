@@ -36,6 +36,11 @@ export const POOL_REGISTRY: Record<string, PoolMap> = {
     thala:    "0x99d34f16193e251af236d5a5c3114fa54e22ca512280317eda2f8faf1514c395",
   },
   "USDt/USDC": {
+    // Hyperion CLMM tier 0 (1 bps) — deep stable pool, verified quotable.
+    // Used as the bridge leg in cross-venue triangular arbs that extract
+    // Darbitex isolation by routing USDC ↔ USDt through external liquidity
+    // instead of Darbitex's $2 plankton stable pool.
+    hyperion: "0xd3894aca06d5f42b27c89e6f448114b3ed6a1ba07f992a58b2126c71dd83c127",
     darbitex: "0xa540e3e43e91f46fd0d8e03bd57d14491244dbbc511b23be53dbe3611894329e",
   },
 };
@@ -198,38 +203,57 @@ async function scan2LegPair(
   return opps;
 }
 
-// ===== 3-leg triangular scan (Darbitex-only for now) =====
+// ===== 3-leg cross-venue triangular scans =====
+//
+// Pure-Darbitex triangles (3 DX pools) are dead weight — they only
+// extract internal inconsistency within Darbitex's isolated island,
+// bottlenecked by the $2 DX stable pool. Removed.
+//
+// Two productive topologies, both anchored to EXTERNAL market:
+//
+// Type 1 — "internal DX imbalance, external stable bridge"
+//   2 DX APT pools + 1 external stable bridge
+//   DX APT/USDC → HY USDC/USDt → DX APT/USDt
+//   Extracts DX-DX inconsistency (both DX APT pools drift separately),
+//   scales with DX APT pool depth, ignores $2 DX stable pool.
+//
+// Type 2 — "single DX pool rebalance, external market reference"
+//   1 DX APT pool + 1 external stable bridge + 1 external APT pool
+//   DX APT/USDC → HY USDC/USDt → HY APT/USDt
+//   Anchors 1 DX APT pool directly against external market APT price
+//   via stable bridge detour. More aggressive rebalancing — each
+//   execution pulls Darbitex toward true market.
 
-async function scan3LegDarbitexTriangle(borrowAmount: bigint): Promise<ArbOpportunity[]> {
+async function scan3LegCrossVenueBridge(borrowAmount: bigint): Promise<ArbOpportunity[]> {
   const opps: ArbOpportunity[] = [];
 
   const apt = META.APT;
   const usdc = META.USDC;
   const usdt = META.USDt;
 
-  const p_apt_usdc = POOL_REGISTRY["APT/USDC"]?.darbitex;
-  const p_apt_usdt = POOL_REGISTRY["APT/USDt"]?.darbitex;
-  const p_usdt_usdc = POOL_REGISTRY["USDt/USDC"]?.darbitex;
-  if (!p_apt_usdc || !p_apt_usdt || !p_usdt_usdc) return opps;
+  const dx_apt_usdc = POOL_REGISTRY["APT/USDC"]?.darbitex;
+  const dx_apt_usdt = POOL_REGISTRY["APT/USDt"]?.darbitex;
+  const hy_stable = POOL_REGISTRY["USDt/USDC"]?.hyperion;
+  if (!dx_apt_usdc || !dx_apt_usdt || !hy_stable) return opps;
 
-  // Direction A: APT → USDC → USDt → APT
+  // Direction A: Darbitex APT/USDC → Hyperion stable → Darbitex APT/USDt
   {
-    const l1 = await quoteDarbitex(p_apt_usdc, apt, borrowAmount);
+    const l1 = await quoteDarbitex(dx_apt_usdc, apt, borrowAmount);
     if (l1 > 0n) {
-      const l2 = await quoteDarbitex(p_usdt_usdc, usdc, l1); // USDC → USDt (b→a of stable)
+      const l2 = await quoteHyperion(hy_stable, usdc, l1); // USDC → USDt via Hyperion tier 0
       if (l2 > 0n) {
-        const l3 = await quoteDarbitex(p_apt_usdt, usdt, l2); // USDt → APT (b→a)
+        const l3 = await quoteDarbitex(dx_apt_usdt, usdt, l2);
         if (l3 > 0n) {
           const split = computeSplit(l3, borrowAmount, 0n);
           const net = l3 > borrowAmount ? l3 - borrowAmount : 0n;
           const bps = Number((net * 10_000n) / borrowAmount);
           opps.push({
             mode: "3leg",
-            label: "Darbitex: APT→USDC→USDt→APT",
+            label: "DX→HY→DX (USDC bridge)",
             legs: [
-              { venue: "darbitex", pool: p_apt_usdc, pairKey: "APT/USDC" },
-              { venue: "darbitex", pool: p_usdt_usdc, pairKey: "USDt/USDC" },
-              { venue: "darbitex", pool: p_apt_usdt, pairKey: "APT/USDt" },
+              { venue: "darbitex", pool: dx_apt_usdc, pairKey: "APT/USDC" },
+              { venue: "hyperion", pool: hy_stable, pairKey: "USDt/USDC" },
+              { venue: "darbitex", pool: dx_apt_usdt, pairKey: "APT/USDt" },
             ],
             borrow_asset: apt,
             mids: [usdc, usdt],
@@ -246,24 +270,24 @@ async function scan3LegDarbitexTriangle(borrowAmount: bigint): Promise<ArbOpport
     }
   }
 
-  // Direction B: APT → USDt → USDC → APT
+  // Direction B: Darbitex APT/USDt → Hyperion stable → Darbitex APT/USDC
   {
-    const l1 = await quoteDarbitex(p_apt_usdt, apt, borrowAmount);
+    const l1 = await quoteDarbitex(dx_apt_usdt, apt, borrowAmount);
     if (l1 > 0n) {
-      const l2 = await quoteDarbitex(p_usdt_usdc, usdt, l1); // USDt → USDC (a→b of stable)
+      const l2 = await quoteHyperion(hy_stable, usdt, l1); // USDt → USDC via Hyperion tier 0
       if (l2 > 0n) {
-        const l3 = await quoteDarbitex(p_apt_usdc, usdc, l2); // USDC → APT (b→a)
+        const l3 = await quoteDarbitex(dx_apt_usdc, usdc, l2);
         if (l3 > 0n) {
           const split = computeSplit(l3, borrowAmount, 0n);
           const net = l3 > borrowAmount ? l3 - borrowAmount : 0n;
           const bps = Number((net * 10_000n) / borrowAmount);
           opps.push({
             mode: "3leg",
-            label: "Darbitex: APT→USDt→USDC→APT",
+            label: "DX→HY→DX (USDt bridge)",
             legs: [
-              { venue: "darbitex", pool: p_apt_usdt, pairKey: "APT/USDt" },
-              { venue: "darbitex", pool: p_usdt_usdc, pairKey: "USDt/USDC" },
-              { venue: "darbitex", pool: p_apt_usdc, pairKey: "APT/USDC" },
+              { venue: "darbitex", pool: dx_apt_usdt, pairKey: "APT/USDt" },
+              { venue: "hyperion", pool: hy_stable, pairKey: "USDt/USDC" },
+              { venue: "darbitex", pool: dx_apt_usdc, pairKey: "APT/USDC" },
             ],
             borrow_asset: apt,
             mids: [usdt, usdc],
@@ -279,6 +303,93 @@ async function scan3LegDarbitexTriangle(borrowAmount: bigint): Promise<ArbOpport
       }
     }
   }
+
+  return opps;
+}
+
+// Type 2 helper: DX APT/X → HY USDC/USDt → externalVenue APT/Y
+// Where X != Y (one is USDC, other is USDt) and the closing venue
+// is an external APT pool. Anchors 1 DX pool to 1 external pool via
+// stable bridge detour, making the arb a direct rebalance event.
+async function scan3LegDxExternalAnchor(borrowAmount: bigint): Promise<ArbOpportunity[]> {
+  const opps: ArbOpportunity[] = [];
+
+  const apt = META.APT;
+  const usdc = META.USDC;
+  const usdt = META.USDt;
+
+  const dx_apt_usdc = POOL_REGISTRY["APT/USDC"]?.darbitex;
+  const dx_apt_usdt = POOL_REGISTRY["APT/USDt"]?.darbitex;
+  const hy_stable = POOL_REGISTRY["USDt/USDC"]?.hyperion;
+  const hy_apt_usdc = POOL_REGISTRY["APT/USDC"]?.hyperion;
+  const hy_apt_usdt = POOL_REGISTRY["APT/USDt"]?.hyperion;
+  const th_apt_usdc = POOL_REGISTRY["APT/USDC"]?.thala;
+  const th_apt_usdt = POOL_REGISTRY["APT/USDt"]?.thala;
+  if (!dx_apt_usdc || !dx_apt_usdt || !hy_stable) return opps;
+
+  type Anchor = { venue: VenueKey; pool: string; pair: string };
+  const externalAptUsdc: Anchor[] = [];
+  const externalAptUsdt: Anchor[] = [];
+  if (hy_apt_usdc) externalAptUsdc.push({ venue: "hyperion", pool: hy_apt_usdc, pair: "APT/USDC" });
+  if (th_apt_usdc) externalAptUsdc.push({ venue: "thala", pool: th_apt_usdc, pair: "APT/USDC" });
+  if (hy_apt_usdt) externalAptUsdt.push({ venue: "hyperion", pool: hy_apt_usdt, pair: "APT/USDt" });
+  if (th_apt_usdt) externalAptUsdt.push({ venue: "thala", pool: th_apt_usdt, pair: "APT/USDt" });
+
+  async function runPath(
+    dxLeg: { pool: string; pair: string; mid: string; midOut: string },
+    externals: Anchor[],
+    midA: string,
+    midB: string,
+    label: string,
+  ) {
+    const l1 = await quoteDarbitex(dxLeg.pool, apt, borrowAmount);
+    if (l1 === 0n) return;
+    const l2 = await quoteHyperion(hy_stable!, midA, l1);
+    if (l2 === 0n) return;
+    for (const ext of externals) {
+      const l3 = await quoteVenue(ext.venue, ext.pool, midB, apt, l2);
+      if (l3 === 0n) continue;
+      const split = computeSplit(l3, borrowAmount, 0n);
+      const net = l3 > borrowAmount ? l3 - borrowAmount : 0n;
+      const bps = Number((net * 10_000n) / borrowAmount);
+      opps.push({
+        mode: "3leg",
+        label: `${label} / ${ext.venue}`,
+        legs: [
+          { venue: "darbitex", pool: dxLeg.pool, pairKey: dxLeg.pair },
+          { venue: "hyperion", pool: hy_stable!, pairKey: "USDt/USDC" },
+          { venue: ext.venue, pool: ext.pool, pairKey: ext.pair },
+        ],
+        borrow_asset: apt,
+        mids: [midA, midB],
+        borrow_amount: borrowAmount,
+        gross_out: l3,
+        net_profit: net,
+        profit_bps: bps,
+        caller_cut: split.caller,
+        treasury_cut: split.treasury,
+        profitable: split.passes,
+      });
+    }
+  }
+
+  // DX APT/USDC → HY stable → external APT/USDt (rebalance DX vs external USDt price)
+  await runPath(
+    { pool: dx_apt_usdc, pair: "APT/USDC", mid: usdc, midOut: usdt },
+    externalAptUsdt,
+    usdc,
+    usdt,
+    "DX/USDC→ext/USDt",
+  );
+
+  // DX APT/USDt → HY stable → external APT/USDC (rebalance DX vs external USDC price)
+  await runPath(
+    { pool: dx_apt_usdt, pair: "APT/USDt", mid: usdt, midOut: usdc },
+    externalAptUsdc,
+    usdt,
+    usdc,
+    "DX/USDt→ext/USDC",
+  );
 
   return opps;
 }
@@ -302,8 +413,10 @@ export async function scanAllOpportunities(sizes: bigint[] = DEFAULT_SIZES): Pro
       const legOpps = await scan2LegPair(pair, size);
       all.push(...legOpps);
     }
-    const triOpps = await scan3LegDarbitexTriangle(size);
-    all.push(...triOpps);
+    const triOpps1 = await scan3LegCrossVenueBridge(size);
+    all.push(...triOpps1);
+    const triOpps2 = await scan3LegDxExternalAnchor(size);
+    all.push(...triOpps2);
   }
 
   // Sort by net profit descending, then by whether profitable
