@@ -55,14 +55,14 @@ function markSuccess(idx: number): void {
   failureStreak[idx] = 0;
 }
 
-// Global in-flight semaphore. Public Aptos endpoints rate-limit per-IP hard,
-// and our aggregator can fire 30+ view calls in a single quote refresh
-// (4 pools × 4 metadata + 6 Hyperion tiers × 3 + 2 Cellana + ...). Without
-// a cap the burst trips 429s immediately. With MAX_IN_FLIGHT=3 the burst is
-// serialized into small batches that stay under the threshold, so individual
-// calls are slower but total throughput is higher because nothing gets
-// retry-stormed.
-const MAX_IN_FLIGHT = 3;
+// Global in-flight semaphore. Public Aptos endpoints rate-limit per-IP hard.
+// MAX_IN_FLIGHT = 2 is the conservative setting for heavily rate-limited IPs
+// (dev laptops with past bot traffic, shared NAT). Lowered from 3 on
+// 2026-04-14 after observing that even the reduced burst with Hyperion
+// single-tier + LiquidSwap removal still occasionally tripped 429 on boot.
+// Cost: boot burst stretches slightly (3-4s instead of 2-3s) but quote
+// latency stays within user-perceptible budget because of the 2s debounce.
+const MAX_IN_FLIGHT = 2;
 let inFlight = 0;
 const waiters: Array<() => void> = [];
 

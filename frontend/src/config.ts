@@ -2,7 +2,6 @@ import { Network } from "@aptos-labs/ts-sdk";
 
 export const PACKAGE = "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
 export const AGGREGATOR_PACKAGE = "0x838a981b43c5bf6fb1139a60ccd7851a4031cd31c775f71f963163c49ab62b47";
-export const LIQUIDSWAP_ADAPTER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6ba13452184d794da4658a4814efd30";
 
 // Public Aptos RPC pool — verified 2026-04-13 for chain_id=1 and POST /view.
 // Client rotates round-robin per request to spread load and improve resilience.
@@ -12,11 +11,20 @@ export const LIQUIDSWAP_ADAPTER_PACKAGE = "0x85d1e4047bde5c02b1915e5677b44ff5a6b
 // Polkachu was dropped 2026-04-13: their CORS preflight returns two
 // `Access-Control-Allow-Origin` headers (specific + wildcard), which
 // violates the spec and causes browsers to reject the response with
-// "TypeError: Failed to fetch". Aptos Labs' two hostnames have clean
+// "TypeError: Failed to fetch". Aptos Labs' three hostnames have clean
 // CORS and are currently the only viable public browser-callable options.
+//
+// 3rd-party RPC landscape verified 2026-04-14 (all failed): Nodit,
+// NodeReal, BlastAPI, AllThatNode → require API key; Ankr, Tatum,
+// publicnode.com → different API shape (JSON-RPC not REST); llamarpc,
+// chainbase, omnia → DNS/reachability failures. No viable browser-
+// callable 3rd-party public Aptos mainnet REST endpoint exists. The
+// real fix is a CloudFlare Worker proxy (see roadmap) — these 3 Aptos
+// Labs hostnames are the interim best-effort.
 export const RPC_LIST: string[] = [
   "https://fullnode.mainnet.aptoslabs.com/v1",
   "https://api.mainnet.aptoslabs.com/v1",
+  "https://mainnet.aptoslabs.com/v1",
 ];
 
 // Legacy single-RPC export; points to the first entry. Some consumers may
@@ -29,12 +37,18 @@ export const SLIPPAGE = 0.005;
 // Aggregator quote debounce (ms). Waits this long after input stops changing
 // before firing the parallel view calls. Tuned conservatively — on a heavily
 // rate-limited IP (dev laptop with past bot traffic) every burst counts, so
-// we let the user pause briefly before firing quotes.
-export const QUOTE_DEBOUNCE_MS = 1500;
+// we let the user pause briefly before firing quotes. Raised from 1500 to
+// 2000 on 2026-04-14 after observing rate-limit storms still surviving the
+// semaphore on aggressive typing.
+export const QUOTE_DEBOUNCE_MS = 2000;
 
-// Hyperion CLMM fee tiers (u8 enum). All six valid mainnet values.
-// Frontend enumerates these to find the best-liquidity pool for a pair.
-export const HYPERION_FEE_TIERS: number[] = [0, 1, 2, 3, 4, 5];
+// Hyperion CLMM: we only query tier 1 (5 bps). Tier enumeration across all
+// six valid u8 values was retired 2026-04-14 — verified on mainnet that only
+// tier 1 holds meaningful liquidity, the other five are dust or empty, so
+// burning 18 RPC calls per quote to discover what we already know is wasted
+// budget. If a new tier becomes liquid later, bump this constant or expand
+// back to enumeration.
+export const HYPERION_ACTIVE_TIER = 1;
 
 export type TokenConfig = {
   meta: string;

@@ -9,7 +9,6 @@ import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
 import {
   AGGREGATOR_PACKAGE,
-  LIQUIDSWAP_ADAPTER_PACKAGE,
   QUOTE_DEBOUNCE_MS,
   TOKENS,
   type TokenConfig,
@@ -20,7 +19,6 @@ type Mode = "swap" | "aggregator";
 const VENUE_LABEL: Record<Venue, string> = {
   darbitex: "Darbitex",
   hyperion: "Hyperion",
-  liquidswap: "LiquidSwap",
   cellana: "Cellana",
 };
 
@@ -115,6 +113,7 @@ export function SwapPage() {
           tokenOut: tOut,
           amountInRaw: rawIn,
           darbitexRoute,
+          includeExternal: mode === "aggregator",
         });
         if (cancelled) return;
         setAgg(result);
@@ -143,7 +142,6 @@ export function SwapPage() {
     if (!agg || !selectedVenue) return null;
     if (selectedVenue === "darbitex") return agg.darbitex;
     if (selectedVenue === "hyperion") return agg.hyperion;
-    if (selectedVenue === "liquidswap") return agg.liquidswap;
     return agg.cellana;
   }, [agg, selectedVenue]);
 
@@ -215,21 +213,6 @@ export function SwapPage() {
           ],
           [],
           AGGREGATOR_PACKAGE,
-        );
-      } else if (activeQuote.venue === "liquidswap") {
-        // Direct call into liquidswap_adapter 0.2.0. Aggregator package is
-        // frozen and only has the stable wrapper; uncorrelated path is only
-        // reachable via the adapter package directly.
-        const fn =
-          activeQuote.liquidswapCurve === "stable"
-            ? "swap_stable"
-            : "swap_uncorrelated";
-        tx = buildEntryTx(
-          "darbitex_liquidswap",
-          fn,
-          [tIn.meta, rawIn.toString(), minOut.toString()],
-          activeQuote.liquidswapTypes ?? [],
-          LIQUIDSWAP_ADAPTER_PACKAGE,
         );
       } else {
         // cellana
@@ -386,18 +369,6 @@ export function SwapPage() {
               isBest={agg.best?.venue === "hyperion"}
               selected={selectedVenue === "hyperion"}
               onSelect={() => agg.hyperion && setSelectedVenue("hyperion")}
-            />
-            <VenueRow
-              label={
-                agg.liquidswap?.liquidswapCurve
-                  ? `LiquidSwap (${agg.liquidswap.liquidswapCurve})`
-                  : "LiquidSwap"
-              }
-              quote={agg.liquidswap}
-              decimals={tOut.decimals}
-              isBest={agg.best?.venue === "liquidswap"}
-              selected={selectedVenue === "liquidswap"}
-              onSelect={() => agg.liquidswap && setSelectedVenue("liquidswap")}
             />
             <VenueRow
               label="Cellana"
