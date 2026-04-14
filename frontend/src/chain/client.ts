@@ -36,11 +36,50 @@ const aptosClients: Aptos[] = effectiveRpcList.map(
   (rpc) => new Aptos(new AptosConfig({ network: NETWORK, fullnode: rpc })),
 );
 
-// Per-provider cooldown state. When a provider returns a transient error
-// (429, 503, HTML-instead-of-JSON, network timeout), it's marked cooling and
-// skipped in the rotation until the timestamp passes. Self-healing.
-const COOLDOWN_MS = 10_000;
+// Per-provider cooldown state with exponential backoff. First 429/503 gives
+// a short cooldown; repeated failures double it up to the max. On any success
+// from an endpoint, its failure count resets. Self-healing + adaptive.
+const BASE_COOLDOWN_MS = 3_000;
+const MAX_COOLDOWN_MS = 60_000;
 const cooldownUntil: number[] = new Array(aptosClients.length).fill(0);
+const failureStreak: number[] = new Array(aptosClients.length).fill(0);
+
+function markCooling(idx: number): void {
+  failureStreak[idx] += 1;
+  const step = Math.min(failureStreak[idx] - 1, 5);
+  const cool = Math.min(BASE_COOLDOWN_MS * Math.pow(2, step), MAX_COOLDOWN_MS);
+  cooldownUntil[idx] = Date.now() + cool;
+}
+
+function markSuccess(idx: number): void {
+  failureStreak[idx] = 0;
+}
+
+// Global in-flight semaphore. Public Aptos endpoints rate-limit per-IP hard,
+// and our aggregator can fire 30+ view calls in a single quote refresh
+// (4 pools × 4 metadata + 6 Hyperion tiers × 3 + 2 Cellana + ...). Without
+// a cap the burst trips 429s immediately. With MAX_IN_FLIGHT=3 the burst is
+// serialized into small batches that stay under the threshold, so individual
+// calls are slower but total throughput is higher because nothing gets
+// retry-stormed.
+const MAX_IN_FLIGHT = 3;
+let inFlight = 0;
+const waiters: Array<() => void> = [];
+
+async function acquireSlot(): Promise<void> {
+  if (inFlight < MAX_IN_FLIGHT) {
+    inFlight += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => waiters.push(resolve));
+  inFlight += 1;
+}
+
+function releaseSlot(): void {
+  inFlight -= 1;
+  const next = waiters.shift();
+  if (next) next();
+}
 
 let rpcCursor = 0;
 
@@ -83,20 +122,32 @@ export function isTransientError(err: unknown): boolean {
   );
 }
 
-// Same try-order + cooldown pattern as rotatedView, but for the shared
-// client pick loop. Factored out so rotatedView and rotatedGetResource
-// share the same rotation state and failover semantics.
+// Build the try-order for one call: available endpoints (cooldown expired)
+// first, rotated for load-spreading. Cooling endpoints are skipped entirely
+// if their cooldown has more than 1s left — we don't hammer them. Endpoints
+// within 1s of recovery are appended as last-resort so we can recover fast
+// once the window reopens.
 function buildTryOrder(): number[] {
   const now = Date.now();
   const available: number[] = [];
-  const cooling: number[] = [];
+  const nearlyReady: number[] = [];
   for (let i = 0; i < aptosClients.length; i++) {
     const idx = (rpcCursor + i) % aptosClients.length;
-    if (cooldownUntil[idx] <= now) available.push(idx);
-    else cooling.push(idx);
+    const remaining = cooldownUntil[idx] - now;
+    if (remaining <= 0) available.push(idx);
+    else if (remaining <= 1000) nearlyReady.push(idx);
   }
   rpcCursor = (rpcCursor + 1) % aptosClients.length;
-  return [...available, ...cooling];
+  return [...available, ...nearlyReady];
+}
+
+// Circuit-breaker error: no endpoints are currently viable. Aggregator quote
+// paths check this and skip the venue for this cycle rather than retrying.
+export class RpcExhaustedError extends Error {
+  constructor() {
+    super("All RPC endpoints cooling — skipping this request cycle");
+    this.name = "RpcExhaustedError";
+  }
 }
 
 // Rotated account-resource read. Used for things like FA metadata lookups
@@ -105,50 +156,65 @@ export async function rotatedGetResource<T>(
   accountAddress: string,
   resourceType: string,
 ): Promise<T> {
-  const tryOrder = buildTryOrder();
-  let lastErr: unknown = null;
-  for (const idx of tryOrder) {
-    try {
-      return (await aptosClients[idx].getAccountResource({
-        accountAddress,
-        resourceType: resourceType as `${string}::${string}::${string}`,
-      })) as T;
-    } catch (e) {
-      if (isTransientError(e)) {
-        cooldownUntil[idx] = Date.now() + COOLDOWN_MS;
-        lastErr = e;
-        continue;
+  await acquireSlot();
+  try {
+    const tryOrder = buildTryOrder();
+    if (tryOrder.length === 0) throw new RpcExhaustedError();
+    let lastErr: unknown = null;
+    for (const idx of tryOrder) {
+      try {
+        const res = (await aptosClients[idx].getAccountResource({
+          accountAddress,
+          resourceType: resourceType as `${string}::${string}::${string}`,
+        })) as T;
+        markSuccess(idx);
+        return res;
+      } catch (e) {
+        if (isTransientError(e)) {
+          markCooling(idx);
+          lastErr = e;
+          continue;
+        }
+        throw e;
       }
-      throw e;
     }
+    throw lastErr ?? new RpcExhaustedError();
+  } finally {
+    releaseSlot();
   }
-  throw lastErr ?? new Error("All RPC providers failed");
 }
 
-// Rotated view: build a try-order that puts non-cooling clients first,
-// cooling clients last (so they're still tried as a fallback if everyone
-// else has failed too). On transient error, mark cooldown and continue.
-// On non-transient error, throw immediately.
+// Rotated view: acquires a global in-flight slot (semaphore caps concurrency
+// at MAX_IN_FLIGHT), then picks the next available endpoint. On transient
+// error, marks the endpoint cooling with exponential backoff and tries the
+// next. Fast-fails with RpcExhaustedError if no endpoint is viable.
 export async function rotatedView<T extends MoveValue[] = MoveValue[]>(
   payload: InputViewFunctionData,
 ): Promise<T> {
-  const tryOrder = buildTryOrder();
-  let lastErr: unknown = null;
-  for (const idx of tryOrder) {
-    try {
-      const res = await aptosClients[idx].view({ payload });
-      return res as T;
-    } catch (e) {
-      if (isTransientError(e)) {
-        cooldownUntil[idx] = Date.now() + COOLDOWN_MS;
-        lastErr = e;
-        continue;
+  await acquireSlot();
+  try {
+    const tryOrder = buildTryOrder();
+    if (tryOrder.length === 0) throw new RpcExhaustedError();
+    let lastErr: unknown = null;
+    for (const idx of tryOrder) {
+      try {
+        const res = await aptosClients[idx].view({ payload });
+        markSuccess(idx);
+        return res as T;
+      } catch (e) {
+        if (isTransientError(e)) {
+          markCooling(idx);
+          lastErr = e;
+          continue;
+        }
+        // Deterministic error (Move abort, bad args) — same on every provider.
+        throw e;
       }
-      // Deterministic error (Move abort, bad args) — same on every provider.
-      throw e;
     }
+    throw lastErr ?? new RpcExhaustedError();
+  } finally {
+    releaseSlot();
   }
-  throw lastErr ?? new Error("All RPC providers failed");
 }
 
 export async function viewFn<T extends MoveValue[] = MoveValue[]>(

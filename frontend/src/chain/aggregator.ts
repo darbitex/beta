@@ -139,54 +139,77 @@ async function quoteHyperionSinglePool(
   }
 }
 
-// Enumerate Hyperion fee tiers for a pair, skip dust pools by reserve floor,
-// quote each viable pool, return the winning (pool, amountOut) or null.
-// Reserve floor is approximate — mostly filters truly-empty pools. Final
-// guard is the max amountOut pick.
+// Per-pair cache of which Hyperion pool (across fee tiers) is the best
+// liquidity venue. Tier enumeration is 18 RPC calls (6 tiers × 3 checks)
+// and cold-starts once per pair, then the cached entry is reused for every
+// subsequent quote on that pair. Pool identity changes only when a new
+// Hyperion pool is created or drained — 5 min TTL is a safe middle ground.
+// Negative cache (pair has no viable pool) also stored so we don't re-check.
+type HyperionBestPool = { pool: string; tier: number } | null;
+const hyperionPairCache = new Map<string, { value: HyperionBestPool; ts: number }>();
+const HYPERION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function hyperionPairKey(metaA: string, metaB: string): string {
+  const [a, b] = metaA.toLowerCase() < metaB.toLowerCase()
+    ? [metaA.toLowerCase(), metaB.toLowerCase()]
+    : [metaB.toLowerCase(), metaA.toLowerCase()];
+  return `${a}:${b}`;
+}
+
+async function discoverBestHyperionPool(
+  metaA: string,
+  metaB: string,
+): Promise<HyperionBestPool> {
+  const viable: { pool: string; tier: number; liq: bigint }[] = [];
+  for (const tier of HYPERION_FEE_TIERS) {
+    const exists = await hyperionPoolExists(metaA, metaB, tier);
+    if (!exists) continue;
+    const pool = await hyperionGetPool(metaA, metaB, tier);
+    if (!pool) continue;
+    const reserves = await hyperionReserves(pool);
+    if (!reserves) continue;
+    // Dust floor: both reserves must be at least 10^3 raw units.
+    if (reserves[0] < 1000n || reserves[1] < 1000n) continue;
+    // Rough liquidity score: min of the two reserves. Larger = deeper.
+    const liq = reserves[0] < reserves[1] ? reserves[0] : reserves[1];
+    viable.push({ pool, tier, liq });
+  }
+  if (viable.length === 0) return null;
+  // Pick the deepest pool once; all subsequent quotes reuse it.
+  viable.sort((a, b) => (b.liq > a.liq ? 1 : b.liq < a.liq ? -1 : 0));
+  return { pool: viable[0].pool, tier: viable[0].tier };
+}
+
+async function getCachedBestHyperionPool(
+  metaIn: string,
+  metaOut: string,
+): Promise<HyperionBestPool> {
+  const key = hyperionPairKey(metaIn, metaOut);
+  const hit = hyperionPairCache.get(key);
+  if (hit && Date.now() - hit.ts < HYPERION_CACHE_TTL_MS) return hit.value;
+  // Hyperion sorts the pair by address bytes internally; pass canonical
+  // order for pool lookups.
+  const [metaA, metaB] = metaIn.toLowerCase() < metaOut.toLowerCase()
+    ? [metaIn, metaOut]
+    : [metaOut, metaIn];
+  const best = await discoverBestHyperionPool(metaA, metaB);
+  hyperionPairCache.set(key, { value: best, ts: Date.now() });
+  return best;
+}
+
+// Quote Hyperion using the cached best pool for the pair. Cold start does
+// the full tier enumeration (18 calls); subsequent calls on the same pair
+// within the TTL do a single quote call.
 async function bestHyperionQuote(
   metaIn: string,
   metaOut: string,
   amountInRaw: bigint,
 ): Promise<Quote | null> {
-  // Hyperion sorts the pair by address bytes internally; pass canonical order
-  // (lex-sort) for pool lookups, but use metaIn for quote direction.
-  const [metaA, metaB] = metaIn.toLowerCase() < metaOut.toLowerCase()
-    ? [metaIn, metaOut]
-    : [metaOut, metaIn];
-
-  const tierChecks = await Promise.all(
-    HYPERION_FEE_TIERS.map(async (tier) => {
-      const exists = await hyperionPoolExists(metaA, metaB, tier);
-      if (!exists) return null;
-      const pool = await hyperionGetPool(metaA, metaB, tier);
-      if (!pool) return null;
-      const reserves = await hyperionReserves(pool);
-      if (!reserves) return null;
-      // Dust floor: both reserves must be at least 10^3 raw units.
-      // CLMM reserves are aggregate, not per-tick, so this is heuristic.
-      if (reserves[0] < 1000n || reserves[1] < 1000n) return null;
-      return { tier, pool };
-    }),
-  );
-
-  const viablePools = tierChecks.filter((x): x is { tier: number; pool: string } => x !== null);
-  if (viablePools.length === 0) return null;
-
-  const quotes = await Promise.all(
-    viablePools.map(async ({ pool }) => ({
-      pool,
-      out: await quoteHyperionSinglePool(pool, metaIn, amountInRaw),
-    })),
-  );
-
-  let best: { pool: string; out: bigint } | null = null;
-  for (const q of quotes) {
-    if (q.out === 0n) continue;
-    if (!best || q.out > best.out) best = q;
-  }
+  const best = await getCachedBestHyperionPool(metaIn, metaOut);
   if (!best) return null;
-
-  return { venue: "hyperion", hyperionPool: best.pool, amountOutRaw: best.out };
+  const out = await quoteHyperionSinglePool(best.pool, metaIn, amountInRaw);
+  if (out === 0n) return null;
+  return { venue: "hyperion", hyperionPool: best.pool, amountOutRaw: out };
 }
 
 async function quoteCellanaCurve(
