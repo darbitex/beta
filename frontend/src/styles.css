@@ -339,19 +339,54 @@ a:hover { text-decoration: underline; }
 .remove-preview .value.accent { color: #ff8800; }
 
 /* Arb page */
-.arb-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.arb-controls { display: flex; gap: 10px; align-items: center; }
+.arb-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 16px; }
+.arb-controls { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
 .arb-auto { display: flex; gap: 4px; align-items: center; color: #888; font-size: 11px; }
-.arb-stats { display: flex; gap: 20px; color: #888; font-size: 11px; margin-bottom: 12px; }
-.arb-table { display: flex; flex-direction: column; border: 1px solid #1a1a1a; border-radius: 8px; overflow: hidden; }
-.arb-row { display: grid; grid-template-columns: 60px 2fr 90px 90px 80px 100px 60px; gap: 8px; padding: 8px 12px; font-size: 11px; align-items: center; border-bottom: 1px solid #0d0d0d; }
-.arb-row.arb-head { background: #0a0a0a; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-.arb-row.arb-ok { color: #e0e0e0; }
-.arb-row.arb-ok .btn { border-color: #ff8800; }
-.arb-row.arb-bad { color: #555; }
+
+.arb-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 10px; }
+.arb-tile { background: #0a0a0a; border: 1px solid #141414; border-radius: 6px; padding: 8px 10px; }
+.arb-tile-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.6px; }
+.arb-tile-val { font-size: 15px; color: #e0e0e0; font-family: ui-monospace, "SF Mono", Menlo, monospace; margin-top: 2px; }
+.arb-tile-val .muted { color: #444; font-size: 11px; margin-left: 2px; }
+.arb-tile-val.pos { color: #44c07a; }
+.arb-tile-val.neg { color: #c44; }
+
+.arb-subtle { font-size: 10px; color: #555; margin-bottom: 12px; letter-spacing: 0.3px; }
+
+.arb-table { display: flex; flex-direction: column; border: 1px solid #1a1a1a; border-radius: 8px; overflow: hidden; background: #050505; }
+.arb-row { display: grid; grid-template-columns: 48px 1.6fr 84px 84px 68px 110px 58px; gap: 10px; padding: 9px 12px; font-size: 11px; align-items: center; border-bottom: 1px solid #0d0d0d; transition: background 0.1s; }
+.arb-row.arb-head { background: #0a0a0a; color: #555; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 9px; }
+.arb-row.arb-ok { color: #e0e0e0; background: rgba(68, 192, 122, 0.03); }
+.arb-row.arb-ok:hover { background: rgba(68, 192, 122, 0.07); }
+.arb-row.arb-neutral { color: #888; }
+.arb-row.arb-bad { color: #4a4a4a; }
 .arb-row:last-child { border-bottom: none; }
-.arb-footer { margin-top: 16px; color: #555; font-size: 10px; line-height: 1.5; }
-.arb-footer code { color: #888; background: #0a0a0a; padding: 1px 4px; border-radius: 3px; }
+
+.arb-mode-pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid #2a2a2a; }
+.arb-mode-pill.mode-2leg { color: #89cff0; border-color: #89cff033; }
+.arb-mode-pill.mode-3leg { color: #ffb85c; border-color: #ffb85c33; }
+
+.arb-path { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.arb-venues { font-weight: 600; letter-spacing: 0.5px; font-size: 11px; }
+.arb-label-sub { font-size: 9px; color: #555; letter-spacing: 0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.arb-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.arb-mono.pos { color: #44c07a; }
+.arb-mono.neg { color: #c44; }
+
+.arb-fire { padding: 4px 10px !important; font-size: 11px !important; }
+.arb-row.arb-ok .arb-fire { border-color: #ff8800; }
+.arb-row.arb-bad .arb-fire { opacity: 0.3; }
+
+.arb-footer { margin-top: 16px; color: #555; font-size: 10px; line-height: 1.6; }
+.arb-footer code { color: #888; background: #0a0a0a; padding: 1px 4px; border-radius: 3px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.arb-footer strong { color: #888; font-weight: 600; }
+
+@media (max-width: 800px) {
+  .arb-tiles { grid-template-columns: repeat(3, 1fr); }
+  .arb-row { grid-template-columns: 40px 1.4fr 70px 60px 60px 58px; }
+  .arb-row > span:nth-child(6), .arb-row > button.arb-fire { display: none; }
+}
 
 /* Responsive */
 @media (min-width: 640px) {
