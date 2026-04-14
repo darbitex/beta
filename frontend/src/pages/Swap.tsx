@@ -235,7 +235,9 @@ export function SwapPage() {
       const resp = await signAndSubmitTransaction(tx);
       toast(`TX: ${String(resp.hash).slice(0, 12)}...`);
       setTimeout(() => {
-        loadPools().then(setPools).catch(() => {});
+        // Post-swap: snapshot / localStorage would return stale reserves,
+        // so force a fresh chain read for the pool universe.
+        loadPools({ fresh: true }).then(setPools).catch(() => {});
         balIn.refresh();
         balOut.refresh();
       }, 3000);

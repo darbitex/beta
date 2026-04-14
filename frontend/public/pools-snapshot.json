@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-04-14T00:59:23.319Z",
+  "package": "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2",
+  "pool_count": 4,
+  "pools": [
+    {
+      "addr": "0xe0824bf4e29f430266bc93a1a16f62b26aef82a7a1029b2a6562e31f6bf59256",
+      "reserve_a": "410158329",
+      "reserve_b": "3413147",
+      "lp_supply": "37415627",
+      "meta_a": "0xa",
+      "meta_b": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+      "token_a": {
+        "meta": "0xa",
+        "symbol": "APT",
+        "decimals": 8
+      },
+      "token_b": {
+        "meta": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+        "symbol": "USDt",
+        "decimals": 6
+      },
+      "hook_nft_1": "0x36311dbbb96a2434f5954b6adbb6fcf9326a009c6c08c1134402c85f1afae3f6",
+      "hook_nft_2": "0xb767d7638bcc11c8ac825ec78a092cae3ec5e982145c6f97a6411e2cb522a122"
+    },
+    {
+      "addr": "0x69a3913973d7009aa687d2f542363690937da74ea94c953853dd81004db0e2af",
+      "reserve_a": "415882498",
+      "reserve_b": "3366168",
+      "lp_supply": "37415627",
+      "meta_a": "0xa",
+      "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+      "token_a": {
+        "meta": "0xa",
+        "symbol": "APT",
+        "decimals": 8
+      },
+      "token_b": {
+        "meta": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      "hook_nft_1": "0xde0bd6d848360877be177e0ec4fe16911ec50ca540ec03fdafc7f56a7167aa24",
+      "hook_nft_2": "0x3022194cac67eed550493cf8482f03b0ed307cb3c62badbdb816be18dc33c1fa"
+    },
+    {
+      "addr": "0xa540e3e43e91f46fd0d8e03bd57d14491244dbbc511b23be53dbe3611894329e",
+      "reserve_a": "1070000",
+      "reserve_b": "1070000",
+      "lp_supply": "1070000",
+      "meta_a": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+      "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+      "token_a": {
+        "meta": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+        "symbol": "USDt",
+        "decimals": 6
+      },
+      "token_b": {
+        "meta": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      "hook_nft_1": "0xef9138b6b40804f54644b57d5f80f05bb078dcc30f8de6186ad77d88d41c915b",
+      "hook_nft_2": "0x5316a43b0ebb66566b30a8a08405d570dd1a160e64938ec9865e6796145c7b3d"
+    },
+    {
+      "addr": "0xa2b520811ba535a857ecc54ab504188799f67e767674fb5141105063889c5af",
+      "reserve_a": "231000",
+      "reserve_b": "231000",
+      "lp_supply": "231000",
+      "meta_a": "0x2b3be0a97a73c87ff62cbdd36837a9fb5bbd1d7f06a73b7ed62ec15c5326c1b8",
+      "meta_b": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+      "token_a": {
+        "meta": "0x2b3be0a97a73c87ff62cbdd36837a9fb5bbd1d7f06a73b7ed62ec15c5326c1b8",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      "token_b": {
+        "meta": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      "hook_nft_1": "0x6b72cfdbcb80eb7b6c38ef94444b72ff6c8cec609d1f6aa8070cf9166303f1f3",
+      "hook_nft_2": "0x4d49e54dbabfd2357ccb71549de8e331b15551b188959a6d80695ae240b4a861"
+    }
+  ]
+}

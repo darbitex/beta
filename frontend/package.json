@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "snapshot": "npx -y tsx scripts/generate-pool-snapshot.ts",
+    "build": "npm run snapshot && tsc -b && vite build",
+    "build:skip-snapshot": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },

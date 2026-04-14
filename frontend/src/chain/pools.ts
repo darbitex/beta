@@ -1,13 +1,40 @@
 import type { TokenConfig } from "../config";
 import { isTransientError, metaEq, viewFn } from "./client";
 import { logError, logInfo, logWarn } from "./logger";
-import { getTokenInfo } from "./tokens";
+import { getTokenInfo, preloadTokenInfo } from "./tokens";
 
 // Pool data cache in localStorage. Reduces cold-start RPC pressure on IPs
 // that are rate-limited (dev laptops with past bot traffic, shared NAT, etc).
 // TTL is intentionally short so reserves/supply stay reasonably fresh.
 const POOL_CACHE_KEY = "darbitex.poolsCache";
 const POOL_CACHE_TTL_MS = 60_000;
+
+// Build-time snapshot served from the Walrus bundle itself — zero RPC cost
+// for cold boots. Populated by `scripts/generate-pool-snapshot.ts` and
+// shipped as `/pools-snapshot.json`. Used only when there's no warm cache.
+// Staleness floor is the deploy age; reserves diverge from live chain until
+// the next 60s cache tick triggers a fresh load or a swap forces `fresh`.
+const SNAPSHOT_URL = "/pools-snapshot.json";
+
+type PoolSnapshotFile = {
+  generated_at: string;
+  package: string;
+  pool_count: number;
+  pools: Pool[];
+};
+
+async function readSnapshot(): Promise<Pool[] | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch(SNAPSHOT_URL, { cache: "no-cache" });
+    if (!res.ok) return null;
+    const json = (await res.json()) as PoolSnapshotFile;
+    if (!json || !Array.isArray(json.pools)) return null;
+    return json.pools;
+  } catch {
+    return null;
+  }
+}
 
 type PoolCacheEntry = {
   ts: number;
@@ -60,16 +87,37 @@ function extractInner(x: unknown): string {
   return String(x);
 }
 
-// Load pools sequentially with explicit retries on transient errors. A
-// localStorage cache short-circuits the load entirely when fresh, which
-// dramatically reduces cold-start RPC pressure on rate-limited IPs.
+// Load pools with a 3-tier cache:
+//   1. localStorage (warm, <60s)     — zero network
+//   2. /pools-snapshot.json (cold)   — zero RPC, served from Walrus bundle
+//   3. on-chain RPC                  — fallback, worst-case cost
+//
+// Post-swap paths pass `{ fresh: true }` to skip tiers 1 and 2 and go
+// straight to chain, because reserves need to reflect the just-executed
+// swap. Normal navigation and cold boots stay RPC-free in the common case.
+//
 // Any view failure is logged with full context so the user can export
 // logs via Ctrl+Shift+L and we can diagnose offline.
-export async function loadPools(): Promise<Pool[]> {
-  const cached = readCache();
+export async function loadPools(opts: { fresh?: boolean } = {}): Promise<Pool[]> {
+  const cached = opts.fresh ? null : readCache();
   if (cached && cached.length > 0) {
     logInfo("pools", `pool cache hit (${cached.length} pools)`);
     return cached;
+  }
+
+  if (!opts.fresh) {
+    const snap = await readSnapshot();
+    if (snap && snap.length > 0) {
+      logInfo("pools", `pool snapshot hit (${snap.length} pools, 0 RPC cost)`);
+      // Seed token cache so future getTokenInfo lookups (balance, decimals,
+      // symbol display) don't fall through to RPC.
+      for (const p of snap) {
+        preloadTokenInfo(p.token_a);
+        preloadTokenInfo(p.token_b);
+      }
+      writeCache(snap);
+      return snap;
+    }
   }
 
   let addrs: string[] = [];

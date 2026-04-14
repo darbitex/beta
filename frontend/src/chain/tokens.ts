@@ -6,6 +6,13 @@ const TOKEN_CACHE: Record<string, TokenConfig> = {};
 
 for (const [, t] of Object.entries(TOKENS)) TOKEN_CACHE[normMeta(t.meta)] = t;
 
+// Pre-populate from snapshot tokens — called by pools.ts when the static
+// `/pools-snapshot.json` is consumed. Avoids re-fetching token metadata
+// over RPC for any token that's already in the snapshot.
+export function preloadTokenInfo(token: TokenConfig): void {
+  TOKEN_CACHE[normMeta(token.meta)] = token;
+}
+
 type MetadataResource = {
   symbol?: string;
   decimals?: number | string;
