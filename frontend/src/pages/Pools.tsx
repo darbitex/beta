@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fromRaw } from "../chain/client";
-import { loadPools, type Pool } from "../chain/pools";
+import { loadPools, subscribePools, type Pool } from "../chain/pools";
 import { AddLiquidityModal } from "../components/AddLiquidityModal";
 import { CreatePoolModal } from "../components/CreatePoolModal";
 
@@ -23,6 +23,7 @@ export function PoolsPage() {
 
   useEffect(() => {
     reload();
+    return subscribePools(setPools);
   }, []);
 
   return (

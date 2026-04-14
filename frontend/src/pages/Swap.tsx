@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { aggregateQuotes, type AggregatorResult, type Quote, type Venue } from "../chain/aggregator";
 import { useFaBalance } from "../chain/balance";
 import { fromRaw, metaEq, normMeta, toRaw } from "../chain/client";
-import { findRoute, loadPools, type Pool, type Route } from "../chain/pools";
+import { findRoute, loadPools, subscribePools, type Pool, type Route } from "../chain/pools";
 import { useSlippage } from "../chain/slippage";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
 import {
   AGGREGATOR_PACKAGE,
   QUOTE_DEBOUNCE_MS,
+  THALA_ADAPTER_PACKAGE,
   TOKENS,
   type TokenConfig,
 } from "../config";
@@ -20,6 +21,7 @@ const VENUE_LABEL: Record<Venue, string> = {
   darbitex: "Darbitex",
   hyperion: "Hyperion",
   cellana: "Cellana",
+  thala: "Thala",
 };
 
 // Build the token universe from (a) hardcoded TOKENS in config and (b) any
@@ -63,6 +65,10 @@ export function SwapPage() {
 
   useEffect(() => {
     loadPools().then(setPools).catch((e) => toast(`Load pools: ${String(e?.message ?? e)}`, true));
+    // Subscribe so the manual RefreshButton and the boot-time background
+    // pool-count check can push new pool state without waiting for this
+    // page to remount.
+    return subscribePools(setPools);
   }, [toast]);
 
   // Token universe = hardcoded TOKENS + unique tokens from loaded pools.
@@ -142,7 +148,8 @@ export function SwapPage() {
     if (!agg || !selectedVenue) return null;
     if (selectedVenue === "darbitex") return agg.darbitex;
     if (selectedVenue === "hyperion") return agg.hyperion;
-    return agg.cellana;
+    if (selectedVenue === "cellana") return agg.cellana;
+    return agg.thala;
   }, [agg, selectedVenue]);
 
   const amountOutFormatted = activeQuote
@@ -214,8 +221,7 @@ export function SwapPage() {
           [],
           AGGREGATOR_PACKAGE,
         );
-      } else {
-        // cellana
+      } else if (activeQuote.venue === "cellana") {
         tx = buildEntryTx(
           "aggregator",
           "swap_cellana",
@@ -229,6 +235,22 @@ export function SwapPage() {
           ],
           [],
           AGGREGATOR_PACKAGE,
+        );
+      } else {
+        // thala — via darbitex_thala adapter, primitive args only
+        tx = buildEntryTx(
+          "adapter",
+          "swap_entry",
+          [
+            activeQuote.thalaPool!,
+            tIn.meta,
+            tOut.meta,
+            rawIn.toString(),
+            minOut.toString(),
+            deadline.toString(),
+          ],
+          [],
+          THALA_ADAPTER_PACKAGE,
         );
       }
 
@@ -379,6 +401,14 @@ export function SwapPage() {
               isBest={agg.best?.venue === "cellana"}
               selected={selectedVenue === "cellana"}
               onSelect={() => agg.cellana && setSelectedVenue("cellana")}
+            />
+            <VenueRow
+              label="Thala"
+              quote={agg.thala}
+              decimals={tOut.decimals}
+              isBest={agg.best?.venue === "thala"}
+              selected={selectedVenue === "thala"}
+              onSelect={() => agg.thala && setSelectedVenue("thala")}
             />
             {agg.best && (
               <div className="venue-row best-external">

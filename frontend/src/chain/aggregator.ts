@@ -1,11 +1,12 @@
 import {
   AGGREGATOR_PACKAGE,
   HYPERION_ACTIVE_TIER,
+  THALA_ADAPTER_PACKAGE,
   type TokenConfig,
 } from "../config";
-import { viewFn } from "./client";
+import { metaEq, viewFn } from "./client";
 import { logError } from "./logger";
-import type { Route } from "./pools";
+import { getThalaPools, type Route } from "./pools";
 
 // Which venue a quote came from.
 // LiquidSwap V0 was removed 2026-04-14 as a user-swap venue: it was the only
@@ -15,7 +16,14 @@ import type { Route } from "./pools";
 // quote, one per curve) without enough TVL advantage to justify under our
 // rate-limit budget. The adapter package `0x85d1e404...` stays deployed
 // for the arb path; only the user-swap wiring is dropped.
-export type Venue = "darbitex" | "hyperion" | "cellana";
+//
+// Thala was re-added 2026-04-14 via the darbitex_thala adapter
+// (`0x583d93de...`, 3/5 multisig). The adapter exposes a primitive-only
+// `quote` view and `swap_entry`, so the SDK-vs-REST encoding issues that
+// forced the first Thala removal are avoided entirely — the adapter
+// marshals Option<address>, SwapPreview struct getters, and pool-type
+// dispatch on the Move side.
+export type Venue = "darbitex" | "hyperion" | "cellana" | "thala";
 
 export type Quote = {
   venue: Venue;
@@ -23,6 +31,7 @@ export type Quote = {
   darbitexRoute?: Route;  // 1-hop or 2-hop
   hyperionPool?: string;
   cellanaIsStable?: boolean;
+  thalaPool?: string;
   amountOutRaw: bigint;
   // Per-hop outputs, for 2-hop quotes. Used to derive tight per-hop
   // min_out floors at execute time.
@@ -33,6 +42,7 @@ export type AggregatorResult = {
   darbitex: Quote | null;
   hyperion: Quote | null;
   cellana: Quote | null;
+  thala: Quote | null;
   best: Quote | null; // max amountOut across all venues
 };
 
@@ -254,6 +264,44 @@ async function bestCellanaQuote(
   return { venue: "cellana", cellanaIsStable: active, amountOutRaw: amountOut };
 }
 
+// Find the seeded Thala pool (from snapshot) whose asset set matches the
+// user's selected pair. Returns the pool address or null. Zero RPC cost —
+// the pool list + assets are already loaded into the `getThalaPools()`
+// registry by the snapshot bootstrap.
+function findThalaPoolForPair(metaIn: string, metaOut: string): string | null {
+  const pools = getThalaPools();
+  for (const p of pools) {
+    if (p.assets.length < 2) continue;
+    const hasIn = p.assets.some((m) => metaEq(m, metaIn));
+    const hasOut = p.assets.some((m) => metaEq(m, metaOut));
+    if (hasIn && hasOut) return p.addr;
+  }
+  return null;
+}
+
+async function bestThalaQuote(
+  metaIn: string,
+  metaOut: string,
+  amountInRaw: bigint,
+): Promise<Quote | null> {
+  const pool = findThalaPoolForPair(metaIn, metaOut);
+  if (!pool) return null;
+  try {
+    const res = await viewFn<[string | number]>(
+      "adapter::quote",
+      [],
+      [pool, metaIn, metaOut, amountInRaw.toString()],
+      THALA_ADAPTER_PACKAGE,
+    );
+    const out = BigInt(String(res[0] ?? "0"));
+    if (out === 0n) return null;
+    return { venue: "thala", thalaPool: pool, amountOutRaw: out };
+  } catch (e) {
+    logError("bestThalaQuote", `pool=${pool.slice(0, 10)}...`, e);
+    return null;
+  }
+}
+
 // `includeExternal` gates the external-venue fan-out. In Swap mode the user
 // only uses Darbitex, so firing Hyperion + Cellana quotes is pure RPC waste
 // — we skip them entirely and spend just 1 RPC call per quote refresh.
@@ -270,7 +318,7 @@ export async function aggregateQuotes(params: {
 }): Promise<AggregatorResult> {
   const { tokenIn, tokenOut, amountInRaw, darbitexRoute, includeExternal } = params;
 
-  const [darbitex, hyperion, cellana] = await Promise.all([
+  const [darbitex, hyperion, cellana, thala] = await Promise.all([
     darbitexRoute
       ? quoteDarbitexRoute(darbitexRoute, amountInRaw)
       : Promise.resolve(null),
@@ -280,13 +328,16 @@ export async function aggregateQuotes(params: {
     includeExternal
       ? bestCellanaQuote(tokenIn.meta, tokenOut.meta, amountInRaw)
       : Promise.resolve(null),
+    includeExternal
+      ? bestThalaQuote(tokenIn.meta, tokenOut.meta, amountInRaw)
+      : Promise.resolve(null),
   ]);
 
   let best: Quote | null = null;
-  for (const q of [darbitex, hyperion, cellana]) {
+  for (const q of [darbitex, hyperion, cellana, thala]) {
     if (!q) continue;
     if (!best || q.amountOutRaw > best.amountOutRaw) best = q;
   }
 
-  return { darbitex, hyperion, cellana, best };
+  return { darbitex, hyperion, cellana, thala, best };
 }

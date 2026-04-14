@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-14T01:40:16.455Z",
+  "generated_at": "2026-04-14T01:51:15.388Z",
   "package": "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2",
   "pool_count": 4,
   "pools": [
@@ -82,6 +82,30 @@
       },
       "hook_nft_1": "0x6b72cfdbcb80eb7b6c38ef94444b72ff6c8cec609d1f6aa8070cf9166303f1f3",
       "hook_nft_2": "0x4d49e54dbabfd2357ccb71549de8e331b15551b188959a6d80695ae240b4a861"
+    }
+  ],
+  "thala_adapter": "0x583d93de79a3f175f1e3751513b2be767f097376f22ea2e7a5aac331e60f206f",
+  "thala_pools": [
+    {
+      "addr": "0xb4a8b8462b4423780d6ee256f3a9a3b9ece5d9440d614f7ab2bfa4556aa4f69d",
+      "assets": [
+        "0xa",
+        "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b"
+      ]
+    },
+    {
+      "addr": "0x99d34f16193e251af236d5a5c3114fa54e22ca512280317eda2f8faf1514c395",
+      "assets": [
+        "0xa",
+        "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b"
+      ]
+    },
+    {
+      "addr": "0x253f970b6a6f071b5fb63d3f16ea2685431a078f62bf98978b37bd0d169ff7c5",
+      "assets": [
+        "0xa",
+        "0x2b3be0a97a73c87ff62cbdd36837a9fb5bbd1d7f06a73b7ed62ec15c5326c1b8"
+      ]
     }
   ]
 }

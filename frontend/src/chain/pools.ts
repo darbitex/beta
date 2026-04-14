@@ -16,12 +16,28 @@ const POOL_CACHE_TTL_MS = 60_000;
 // the next 60s cache tick triggers a fresh load or a swap forces `fresh`.
 const SNAPSHOT_URL = "/pools-snapshot.json";
 
+export type ThalaPoolEntry = {
+  addr: string;
+  assets: string[];
+};
+
 type PoolSnapshotFile = {
   generated_at: string;
   package: string;
   pool_count: number;
   pools: Pool[];
+  thala_adapter?: string;
+  thala_pools?: ThalaPoolEntry[];
 };
+
+// Thala pool registry populated from the snapshot on first read. Separate
+// from the Darbitex Pool cache because Thala pools are only consulted by
+// the aggregator's external-venue fan-out, not by Darbitex routing.
+let thalaPoolRegistry: ThalaPoolEntry[] | null = null;
+
+export function getThalaPools(): ThalaPoolEntry[] {
+  return thalaPoolRegistry ?? [];
+}
 
 async function readSnapshot(): Promise<Pool[] | null> {
   if (typeof fetch === "undefined") return null;
@@ -30,6 +46,10 @@ async function readSnapshot(): Promise<Pool[] | null> {
     if (!res.ok) return null;
     const json = (await res.json()) as PoolSnapshotFile;
     if (!json || !Array.isArray(json.pools)) return null;
+    // Seed the Thala registry from the snapshot while we have it open.
+    if (Array.isArray(json.thala_pools)) {
+      thalaPoolRegistry = json.thala_pools;
+    }
     return json.pools;
   } catch {
     return null;

@@ -1,7 +1,7 @@
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useEffect, useState } from "react";
 import { fromRaw, viewFn } from "../chain/client";
-import { loadPools, type Pool } from "../chain/pools";
+import { loadPools, subscribePools, type Pool } from "../chain/pools";
 import { buildEntryTx } from "../chain/tx";
 import { useToast } from "../components/Toast";
 
@@ -59,6 +59,11 @@ export function HooksPage() {
 
   useEffect(() => {
     reload();
+    // Subscribe so RefreshButton triggers a reload of listings (which
+    // include hook fee buckets that change per-swap).
+    return subscribePools(() => {
+      reload();
+    });
   }, []);
 
   async function buyHook(poolAddr: string) {

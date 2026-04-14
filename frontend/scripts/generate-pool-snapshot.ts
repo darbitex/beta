@@ -18,18 +18,36 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE =
   "0x2656e373ace5ccbc191aedaa65f12a50b9d4ea2b8e6f2d0166741994449c7ec2";
+const THALA_ADAPTER =
+  "0x583d93de79a3f175f1e3751513b2be767f097376f22ea2e7a5aac331e60f206f";
 const RPC = "https://api.mainnet.aptoslabs.com/v1";
+
+// Curated list of Thala V2 pool addresses to include in the snapshot. The
+// frontend aggregator uses these as a pre-filter: only pools whose pair
+// matches the user's selected tokens are quoted. Adding a new Thala pool
+// to this list and running `npm run snapshot` makes it discoverable without
+// any Move or TypeScript changes.
+const THALA_POOL_SEEDS: string[] = [
+  // APT / nUSDC weighted — primary liquid pair
+  "0xb4a8b8462b4423780d6ee256f3a9a3b9ece5d9440d614f7ab2bfa4556aa4f69d",
+  // APT / USDt weighted
+  "0x99d34f16193e251af236d5a5c3114fa54e22ca512280317eda2f8faf1514c395",
+  // APT / lzUSDC weighted
+  "0x253f970b6a6f071b5fb63d3f16ea2685431a078f62bf98978b37bd0d169ff7c5",
+];
 
 async function view<T = unknown>(
   fn: string,
   args: unknown[] = [],
   typeArgs: string[] = [],
+  packageOverride?: string,
 ): Promise<T> {
+  const pkg = packageOverride ?? PACKAGE;
   const res = await fetch(`${RPC}/view`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      function: `${PACKAGE}::${fn}`,
+      function: `${pkg}::${fn}`,
       type_arguments: typeArgs,
       arguments: args,
     }),
@@ -77,6 +95,15 @@ type PoolSnapshot = {
   token_b: TokenInfo;
   hook_nft_1: string;
   hook_nft_2: string;
+};
+
+// A Thala pool slot indexed by its pair assets. Reserves / pool type are
+// NOT included — the adapter's `quote` view handles dispatch and reads
+// live chain state. This file just answers "is there a Thala pool for
+// pair X/Y and what's its address?" without any runtime RPC.
+type ThalaPoolSnapshot = {
+  addr: string;
+  assets: string[]; // normalized metadata addresses, in on-chain order
 };
 
 function extractInner(x: unknown): string {
@@ -155,12 +182,43 @@ async function main(): Promise<void> {
     }
   }
 
+  // 3. Thala adapter pools — pair discovery
+  console.log(
+    `[snapshot] fetching Thala adapter pool assets (${THALA_POOL_SEEDS.length} seeds)`,
+  );
+  const thala_pools: ThalaPoolSnapshot[] = [];
+  for (const addr of THALA_POOL_SEEDS) {
+    try {
+      const assetsRes = await view<[string[]]>(
+        "adapter::pool_assets",
+        [addr],
+        [],
+        THALA_ADAPTER,
+      );
+      const assets = (assetsRes[0] ?? []).map((a) => normMeta(a));
+      if (assets.length >= 2) {
+        thala_pools.push({ addr, assets });
+        console.log(
+          `[snapshot]   thala ${addr.slice(0, 10)}...  ${assets.map((a) => a.slice(0, 10)).join(" / ")}`,
+        );
+      } else {
+        console.error(`[snapshot]   thala ${addr.slice(0, 10)}... empty assets, skipped`);
+      }
+    } catch (e) {
+      console.error(
+        `[snapshot]   thala ${addr.slice(0, 10)}... failed: ${String(e)}`,
+      );
+    }
+  }
+
   const elapsed = ((Date.now() - started) / 1000).toFixed(1);
   const snapshot = {
     generated_at: new Date().toISOString(),
     package: PACKAGE,
     pool_count: pools.length,
     pools,
+    thala_adapter: THALA_ADAPTER,
+    thala_pools,
   };
 
   const thisFile = fileURLToPath(import.meta.url);
@@ -168,7 +226,7 @@ async function main(): Promise<void> {
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(snapshot, null, 2));
   console.log(
-    `[snapshot] wrote ${pools.length} pools (${tokenCache.size} unique tokens) to ${outPath} in ${elapsed}s`,
+    `[snapshot] wrote ${pools.length} Darbitex pools + ${thala_pools.length} Thala pools (${tokenCache.size} unique tokens) to ${outPath} in ${elapsed}s`,
   );
 }
 
